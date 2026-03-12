@@ -1,93 +1,266 @@
-# Selfhost
+# Self-Host Quick Start
 
+This is the easiest way to run the stack on your own Debian server.
 
+It is meant for a single machine that will run:
 
-## Getting started
+- `ejabberd` for XMPP/chat
+- `Stalwart` for mail
+- `email-glue` for the client-facing mail API
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+By default it keeps message history, allows larger uploads, gives mailboxes unlimited quota, and protects `email-glue` with a client token.
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+## Why Self-Host
 
-## Add your files
+- be independent
+- have full control over your own email server
+- provide a secure, private way to talk with family and friends
+- avoid hosted storage limits
+- avoid hosted rate limits
+- control your own data
+- use your own domain for all your email and XMPP messages
 
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+## What You Need
 
+You need:
+
+- a Debian server with `sudo` or root access
+- a domain name that points to that server
+- control over your provider firewall/security group
+
+Only needed if you want to use `f5m.sh` and `l5m.sh`:
+
+- an SSH public key on your laptop, usually `~/.ssh/id_ed25519.pub`
+
+For this to work, the ports below must be:
+
+- no other service on the machine is already using them
+- your provider firewall/security group allows them
+
+Ports:
+
+- `22/tcp` for SSH if you administer the server over SSH
+- `80/tcp` for Let's Encrypt
+- `5222/tcp`, `5223/tcp`, `5269/tcp`, `5443/tcp` for ejabberd
+- `25/tcp`, `465/tcp`, `587/tcp`, `993/tcp` for mail
+- `3478/udp` for STUN/TURN
+
+## Fastest Path
+
+If this is a pretty fresh server, do this in order.
+
+1. Copy this repo to the server and enter the self-host directory.
+
+```bash
+cd /path/to/production/variants/selfhost
 ```
-cd existing_repo
-git remote add origin https://gitlab.com/axichat/selfhost.git
-git branch -M main
-git push -uf origin main
+
+2. Decide whether you want `f5m.sh`.
+
+Use `f5m.sh` and later `l5m.sh` only if both are true:
+
+- you are relatively inexperienced with Linux server security
+- this is a fresh server dedicated to Axichat
+
+If you already know the basics and/or this server already runs other services, skip `f5m.sh` and `l5m.sh`.
+
+Do not run `f5m.sh` blindly on a shared or already-configured server. It does:
+
+- `ufw --force reset`
+- `ufw default deny incoming`
+- only re-allows the configured SSH port at that moment
+
+That can break unrelated services until you open their ports again.
+
+If you want to install your SSH key while doing this:
+
+```bash
+sudo SSH_USER=root SSH_PUBKEY_FILE=~/.ssh/id_ed25519.pub ./f5m.sh
 ```
 
-## Integrate with your tools
+If you are already logged in as the final admin user and just want the defaults:
 
-* [Set up project integrations](https://gitlab.com/axichat/selfhost/-/settings/integrations)
+```bash
+sudo ./f5m.sh
+```
 
-## Collaborate with your team
+If you skip `f5m.sh`, that is fine. The real setup still works without either `f5m.sh` or `l5m.sh`.
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+3. If you ran `f5m.sh`, make sure SSH key login works before you continue.
 
-## Test and Deploy
+Test a fresh SSH session from your laptop. Do not keep going until it works.
 
-Use the built-in continuous integration in GitLab.
+4. Export your domain name in the shell.
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+```bash
+export DOMAIN=example.com
+```
 
-***
+5. Install ejabberd.
 
-# Editing this README
+```bash
+cd ejabberd
+sudo -E ./install.sh
+cd ..
+```
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+If you want the manual ejabberd steps or need more detail, see [`ejabberd/README.md`](ejabberd/README.md).
 
-## Suggestions for a good README
+6. Install Stalwart and `email-glue`.
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+```bash
+cd stalwart
+sudo -E ./install.sh --public-token
+cd ..
+```
 
-## Name
-Choose a self-explaining name for your project.
+If you want the manual Stalwart steps or flag details, see [`stalwart/README.md`](stalwart/README.md).
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+Notes:
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+- The Stalwart installer may ask you to create the domain in Stalwart Webadmin.
+- It may also ask for the Stalwart Admin API token that `email-glue` uses. This repo calls that the "glue API token".
+- If that happens, just follow the tunnel instructions it prints. It already gives you the exact `ssh -L ...` command to run from your laptop.
+- To create the glue API token manually in Webadmin: create an API key principal, name it `email-glue`, give it the `admin` role, generate/copy the secret, then either pass it with `--glue-api-token=TOKEN` or paste it when the installer prompts.
+- The public `email-glue` client token is separate from the glue API token. By default `stalwart/install.sh` reuses `/root/stalwart-secrets/client_token.txt` or generates a new one. You can set it explicitly with `--public-token=TOKEN`, or disable that requirement with `--no-public-token` if you really intend to expose `8443` without the token gate.
+- The Stalwart README has the same Webadmin/API-token flow written out more explicitly if you want it in one place: [`stalwart/README.md`](stalwart/README.md).
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+Recommended Stalwart invocations:
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+- Reuse or auto-generate the public client token, and prompt for the glue API token if needed:
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+```bash
+cd stalwart
+sudo -E ./install.sh --public-token
+cd ..
+```
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+- If you already have the Stalwart Admin API key for `email-glue`:
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+```bash
+cd stalwart
+sudo -E ./install.sh --public-token --glue-api-token=TOKEN
+cd ..
+```
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+- If you want to pin both tokens explicitly:
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+```bash
+cd stalwart
+sudo -E ./install.sh --public-token=CLIENT_TOKEN --glue-api-token=GLUE_API_TOKEN
+cd ..
+```
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+7. Optionally run `l5m.sh`.
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+```bash
+sudo ./l5m.sh
+```
 
-## License
-For open source projects, say how it is licensed.
+That disables password SSH login. Only do this if you want these scripts managing your SSH setup.
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+If you already manage SSH yourself, skip `l5m.sh`.
+
+## What Each Script Is For
+
+- `f5m.sh`: optional first-server hardening for beginners on a fresh Axichat-only host. Installs basic security packages, enables UFW and fail2ban, and keeps password SSH enabled for the first session so you do not lock yourself out too early.
+- `ejabberd/install.sh`: installs and configures the XMPP server, requests TLS, sets up upload/captcha/websocket endpoints, and configures the firewall rules it needs on the server.
+- `stalwart/install.sh`: installs Stalwart and `email-glue`, writes the service config, and guides you through the Stalwart Webadmin steps if the domain or API token is not ready yet.
+- `l5m.sh`: optional final SSH lockdown. Disables password SSH once you know key login works.
+
+## Script Inputs And Options
+
+- `f5m.sh`
+- Required: run as `root` or via `sudo`.
+- Optional env:
+- `SSH_USER`: account that should receive the SSH public key. Default: `root`.
+- `SSH_PUBKEY_FILE`: path to a public key file to append to `authorized_keys`.
+- `SSH_PUBKEY`: literal public key string to append to `authorized_keys`.
+- `SSH_PORT`: SSH port to allow through UFW. Default: `22`.
+
+- `l5m.sh`
+- Required: run as `root` or via `sudo`.
+- Optional env:
+- `SSH_USER`: used to verify that `authorized_keys` exists before disabling password auth. Default: `root`.
+- `SSH_PORT`: SSH port to keep allowed in UFW. Default: `22`.
+
+- `ejabberd/install.sh`
+- Required env: `DOMAIN=example.com`.
+- Optional env:
+- `EJABBERD_VERSION_PREFIX`: apt version prefix to install. Default: `26.`.
+- Interactive prompts:
+- `Enable fpush (XEP-0357) component? [y/N]`
+- `Set fpush component secret for push.$DOMAIN` if fpush is enabled
+- `Public IPv4 for TURN` if auto-detect fails
+- APNS module name, `.p12` path, password, topic, and environment if fpush is enabled
+
+- `stalwart/install.sh`
+- Required env: `DOMAIN=example.com`.
+- Available flags:
+- `--glue-api-token=TOKEN`: supply the Stalwart Admin API key used by `email-glue`.
+- `--public-token`: require the public client token for `email-glue`. This is the default behavior.
+- `--public-token=TOKEN`: same as `--public-token`, but persist the exact token value you provide.
+- `--no-public-token`: disable the public client token requirement. Not recommended on an internet-reachable host.
+- Helpful env overrides:
+- `STALWART_SSH_HOST`: host/IP shown in SSH tunnel instructions. Default: `$DOMAIN`.
+- `STALWART_SSH_USER`: SSH user shown in tunnel instructions. Default: `root`.
+- `TUNNEL_LOCAL_PORT`: local port used in SSH tunnel instructions. Default: `18080`.
+- `WEBADMIN_REMOTE_PORT`: Stalwart Webadmin/API port on the server. Default: `8080`.
+- The Stalwart README documents the glue token flow and the available runtime env keys for `email-glue`: [`stalwart/README.md`](stalwart/README.md).
+
+## Existing Server Notes
+
+This can live alongside other software, but you need to watch port conflicts and firewall rules.
+
+Important limits:
+
+- `f5m.sh` is not friendly to an already-tuned firewall because it resets UFW.
+- `ejabberd/install.sh` requires port `80` to be free during setup. It aborts if something is already listening on `80`.
+- `ejabberd` needs `5222`, `5223`, `5269`, `5443`, and `3478/udp`.
+- `Stalwart` needs `25`, `465`, `587`, `993`, and `8443`.
+- Your provider firewall/security group must allow those ports too, or the setup will still fail even if UFW is open on the server.
+
+If some other service is already using those ports, fix that before you run the installers.
+
+If you are adding this to an existing server, the safer path is usually:
+
+1. Skip `f5m.sh`.
+2. Review the service ports above.
+3. Run the `ejabberd` and `stalwart` installers directly.
+4. Adjust your firewall rules yourself.
+5. Skip `l5m.sh` unless you specifically want its SSH settings.
+
+## Quick Verify
+
+After both installers finish, make sure the services are up:
+
+```bash
+sudo systemctl status ejabberd --no-pager
+sudo systemctl status stalwart.service --no-pager
+sudo systemctl status email-glue.service --no-pager
+```
+
+Quick health checks:
+
+```bash
+curl -fsS http://127.0.0.1:8080/healthz/ready
+curl -fsS -X POST http://127.0.0.1:5281/api/status -H 'Content-Type: application/json' -d '{}'
+curl -sk -H "X-Client-Token: $(sudo cat /root/stalwart-secrets/client_token.txt)" https://127.0.0.1:8443/health
+```
+
+If you ran `stalwart/install.sh --no-public-token`, you can omit the `X-Client-Token` header on the `8443` check.
+
+## Where To Look Next
+
+If an installer prompt is unclear or you want the manual steps:
+
+- see [`ejabberd/README.md`](ejabberd/README.md)
+- see [`stalwart/README.md`](stalwart/README.md)
+
+## Defaults
+
+This setup uses generous defaults:
+
+- mailbox quota defaults to unlimited
+- ejabberd upload limits are much larger
+- message history is kept by default instead of being purged automatically

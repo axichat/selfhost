@@ -1,0 +1,313 @@
+auth_password_format: scram
+auth_scram_hash: sha512
+auth_method: sql
+default_db: sql
+
+hosts:
+  - __DOMAIN__
+
+hide_sensitive_log_data: true
+loglevel: warning
+log_rotate_size: 104857600
+log_rotate_count: 1
+
+ca_file: /opt/ejabberd/conf/cacert.pem
+
+captcha_cmd: /opt/ejabberd-@VERSION@/lib/captcha.sh
+captcha_url: https://@HOST@:5443/captcha
+
+certfiles:
+  - /opt/ejabberd/conf/server.pem
+
+sql_type: sqlite
+sql_database: /opt/ejabberd/database/ejabberd.db
+update_sql_schema: true
+
+acme:
+  auto: true
+  ca_url: https://acme-v02.api.letsencrypt.org/directory
+  contact:
+    - "mailto:admin@__DOMAIN__"
+
+outgoing_s2s_families:
+  - ipv4
+
+s2s_use_starttls: required
+s2s_access: all
+
+acl:
+  admin:
+    user:
+      - "admin@__DOMAIN__"
+
+  blocked:
+    user: []
+
+  allowed_registration:
+    user_regexp: "^[a-z][a-z0-9._-]{3,19}$"
+
+  blocked_registration:
+    user_glob:
+      - "?"
+      - "??"
+
+  local:
+    user_regexp: ""
+
+  loopback:
+    ip:
+      - 127.0.0.0/8
+
+access_rules:
+  local:
+    - allow: local
+
+  c2s:
+    - deny: blocked
+    - allow: all
+
+  announce:
+    - allow: admin
+
+  configure:
+    - allow: admin
+
+  muc_create:
+    - allow: local
+
+  pubsub_createnode:
+    - allow: local
+
+  trusted_network:
+    - allow: loopback
+
+  registration:
+    - deny: blocked_registration
+    - allow: allowed_registration
+
+  s2s:
+    - allow: all
+
+api_permissions:
+  "console commands":
+    from:
+      - ejabberd_ctl
+    who: all
+    what: "*"
+
+  "admin access":
+    who:
+      access:
+        allow:
+          - acl: loopback
+          - acl: admin
+      oauth:
+        scope: "ejabberd:admin"
+        access:
+          allow:
+            - acl: loopback
+            - acl: admin
+    what:
+      - "*"
+      - "!stop"
+      - "!start"
+
+  "public commands":
+    who:
+      ip: 127.0.0.1/8
+    what:
+      - status
+      - connected_users_number
+
+shaper:
+  normal:
+    rate: 3000
+    burst_size: 20000
+  fast: 100000
+
+shaper_rules:
+  c2s_shaper:
+    none: admin
+    normal: all
+
+  s2s_shaper: fast
+
+listen:
+  -
+    port: 5222
+    ip: "0.0.0.0"
+    module: ejabberd_c2s
+    max_stanza_size: 262144
+    shaper: c2s_shaper
+    access: c2s
+    starttls_required: true
+
+  -
+    port: 5223
+    ip: "0.0.0.0"
+    module: ejabberd_c2s
+    max_stanza_size: 262144
+    shaper: c2s_shaper
+    access: c2s
+    tls: true
+
+  -
+    port: 5269
+    ip: "0.0.0.0"
+    module: ejabberd_s2s_in
+    max_stanza_size: 524288
+    shaper: s2s_shaper
+
+  -
+    port: 5443
+    ip: "0.0.0.0"
+    module: ejabberd_http
+    tls: true
+    request_handlers:
+      /admin: ejabberd_web_admin
+      /bosh: mod_bosh
+      /captcha: ejabberd_captcha
+      /register: mod_register_web
+      /upload: mod_http_upload
+      /ws: ejabberd_http_ws
+
+  -
+    port: 5281
+    ip: "127.0.0.1"
+    module: ejabberd_http
+    tls: false
+    request_handlers:
+      /api: mod_http_api
+
+  -
+    port: 5280
+    ip: "0.0.0.0"
+    module: ejabberd_http
+    tls: false
+    request_handlers:
+      /.well-known/acme-challenge: ejabberd_acme
+
+  -
+    port: 3478
+    ip: "0.0.0.0"
+    transport: udp
+    module: ejabberd_stun
+    use_turn: true
+    turn_ipv4_address: "__TURN_IPV4__"
+
+  -
+    port: 5347
+    ip: "127.0.0.1"
+    module: ejabberd_service
+    shaper_rule: fast
+    hosts:
+      push.@HOST@:
+        password: "__FPUSH_COMPONENT_SECRET__"
+
+modules:
+  mod_adhoc: {}
+  mod_admin_extra: {}
+
+  mod_announce:
+    access: announce
+
+  mod_avatar: {}
+  mod_blocking: {}
+  mod_bosh: {}
+  mod_caps: {}
+  mod_carboncopy: {}
+  mod_client_state: {}
+  mod_configure:
+    access: configure
+  mod_disco: {}
+
+  mod_fail2ban: {}
+  mod_http_api: {}
+
+  mod_http_upload:
+    docroot: "/var/www/upload"
+    put_url: "https://@HOST@:5443/upload"
+    get_url: "https://@HOST@:5443/upload"
+    max_size: 10737418240
+    custom_headers:
+      "Access-Control-Allow-Origin": "https://@HOST@"
+      "Access-Control-Allow-Methods": "GET,HEAD,PUT,OPTIONS"
+      "Access-Control-Allow-Headers": "Content-Type"
+
+  mod_last: {}
+
+  mod_mam:
+    db_type: sql
+    default: always
+    assume_mam_usage: true
+
+  mod_muc:
+    access:
+      - allow
+    access_admin:
+      - allow: admin
+    access_create: muc_create
+    access_persistent: muc_create
+    access_mam:
+      - allow
+    min_message_interval: 0.4
+    min_presence_interval: 4
+    default_room_options:
+      mam: true
+      persistent: true
+      members_only: true
+      public: false
+      public_list: false
+      members_by_default: true
+      allow_user_invites: true
+
+  mod_muc_admin: {}
+  mod_muc_occupantid: {}
+
+  mod_offline: {}
+
+  mod_ping: {}
+  mod_privacy: {}
+  mod_private: {}
+
+  mod_proxy65:
+    access: local
+    max_connections: 5
+
+  mod_pubsub:
+    access_createnode: pubsub_createnode
+    ignore_pep_from_offline: false
+    last_item_cache: false
+    plugins:
+      - flat
+      - pep
+    force_node_config:
+      storage:bookmarks:
+        access_model: whitelist
+
+  mod_push: {}
+  mod_push_keepalive: {}
+
+  mod_register:
+    access: registration
+    ip_access: all
+    captcha_protected: true
+    password_strength: 32
+
+  mod_roster:
+    versioning: true
+
+  mod_s2s_dialback: {}
+
+  mod_shared_roster: {}
+
+  mod_stream_mgmt:
+    resend_on_timeout: true
+
+  mod_stun_disco: {}
+
+  mod_vcard: {}
+  mod_vcard_xupdate: {}
+
+  mod_version:
+    show_os: false

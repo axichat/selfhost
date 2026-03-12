@@ -1,0 +1,8 @@
+[Unit]
+Description=Update Stalwart TLS cert
+After=stalwart.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/stalwart-domain
+ExecStart=/usr/local/bin/update-stalwart-cert.sh

@@ -1,0 +1,58 @@
+server.hostname = "__DOMAIN__"
+server.tls.certificate = "default"
+
+[server.listener."smtp"]
+bind = ["0.0.0.0:25"]
+protocol = "smtp"
+
+[server.listener."submission"]
+bind = ["0.0.0.0:587"]
+protocol = "smtp"
+
+[server.listener."submissions"]
+bind = ["0.0.0.0:465"]
+protocol = "smtp"
+tls.implicit = true
+
+[server.listener."imaptls"]
+bind = ["0.0.0.0:993"]
+protocol = "imap"
+tls.implicit = true
+
+[server.listener."http"]
+bind = ["0.0.0.0:8080"]
+protocol = "http"
+
+[certificate."default"]
+cert = "%{file:/opt/stalwart/certs/__DOMAIN__.fullchain.pem}%"
+private-key = "%{file:/opt/stalwart/certs/__DOMAIN__.privkey.pem}%"
+default = true
+
+[storage]
+data = "rocksdb"
+fts = "rocksdb"
+blob = "rocksdb"
+lookup = "rocksdb"
+directory = "internal"
+
+[store."rocksdb"]
+type = "rocksdb"
+path = "/opt/stalwart/data"
+compression = "lz4"
+
+[directory."internal"]
+type = "internal"
+store = "rocksdb"
+
+[authentication.fallback-admin]
+user = "admin"
+secret = "__FALLBACK_HASH__"
+
+[server.auto-ban.auth]
+rate = "20/1h"
+
+[server.auto-ban.abuse]
+rate = "35/1d"
+
+[server.auto-ban.loiter]
+rate = "150/1d"
