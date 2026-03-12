@@ -1263,9 +1263,9 @@ func main() {
 		cfg:      cfg,
 		stalwart: newStalwartClient(cfg),
 		// Default to a public-but-gated profile: token-protected by default,
-		// tolerant for normal client traffic, but not effectively unlimited.
+		// tolerant for normal client traffic, with a soft signup throttle.
 		globalRL: newBucketStore(5.0, 30, 30*time.Minute),
-		signupRL: newBucketStore(1.0/120.0, 10, 24*time.Hour),
+		signupRL: newBucketStore(1.0/5.0, 10, 24*time.Hour),
 		status:   newStatusCache(30 * time.Second),
 	}
 
