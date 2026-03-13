@@ -1,4 +1,4 @@
-![Axichat banner](https://github.com/axichat/axichat/raw/master/metadata/en-US/images/axichat_banner.png)
+![Axichat banner](https://raw.githubusercontent.com/axichat/axichat/master/metadata/en-US/images/axichat_banner.png)
 
 * * *
 
@@ -45,10 +45,10 @@ Optional, only if you want `f5m.sh` / `l5m.sh` managing SSH:
 
 ## Install
 
-1. Enter the self-host directory on the server.
+1. Copy or clone this directory to the server, then enter the `selfhost` directory.
 
 ```bash
-cd /path/to/production/variants/selfhost
+cd selfhost
 ```
 
 2. Optional: run `f5m.sh` on a fresh dedicated host.
