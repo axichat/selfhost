@@ -256,6 +256,7 @@ modules:
       mam: true
       persistent: true
       members_only: true
+      anonymous: false
       public: false
       public_list: false
       members_by_default: true
