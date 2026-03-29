@@ -50,11 +50,6 @@ PTR / reverse DNS is usually set in your VPS or hosting provider panel, not in y
 
 For normal installs on common Linux servers (`amd64` and `arm64`), the repo now ships a bundled `email-glue` binary. You do not need Go installed on the server for those cases.
 
-The installer tracks progress in:
-
-- `/etc/axichat/selfhost.env`
-- `/var/lib/axichat-selfhost/state.json`
-
 ## Install
 
 1. Get this repo onto the server and enter the `selfhost` directory.
@@ -113,6 +108,17 @@ sudo ./install.sh upgrade
 
 `upgrade` re-runs the saved app/service configuration. It does not restart the initial fresh-server bootstrap flow.
 
+If you use `fpush`, keep `/opt/fpush/settings.json` and the APNS `.p12` file it references in place before running `upgrade`. That is what lets the rerun stay non-interactive.
+
+To reset a demo box and try again from a clean local state, run:
+
+```bash
+sudo ./uninstall.sh --yes
+```
+
+That removes the locally installed stack and then prints the manual DNS / PTR cleanup steps you still need to do off-server.
+It removes the installed app stack, not the whole server history. It does not undo general host-hardening changes from `f5m.sh` / `l5m.sh`.
+
 Typical email checkpoints:
 
 - create the Stalwart domain in Webadmin
@@ -128,6 +134,7 @@ sudo ./install.sh doctor
 ```
 
 `verify` checks the local services and health endpoints. `doctor` adds higher-level checks and uses `dig` for DNS checks when it is available.
+For email installs, `doctor` checks not just that MX/PTR records exist, but that MX points at your configured mail domain and PTR points back to the same domain.
 For email installs, `verify` is the immediate local check and `doctor` is the better follow-up after DNS and PTR have propagated.
 
 For the full flag list, run:

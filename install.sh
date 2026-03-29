@@ -6,12 +6,9 @@ CONFIG_FILE="${AXICHAT_SELFHOST_CONFIG_FILE:-/etc/axichat/selfhost.env}"
 STATE_DIR="${AXICHAT_SELFHOST_STATE_DIR:-/var/lib/axichat-selfhost}"
 STATE_FILE="${STATE_DIR}/state.env"
 STATE_JSON="${STATE_DIR}/state.json"
-
-CHECKPOINT_WEBADMIN_DOMAIN_RC=40
-CHECKPOINT_GLUE_API_TOKEN_RC=41
+LOCK_FILE="${AXICHAT_SELFHOST_LOCK_FILE:-/run/lock/axichat-selfhost.lock}"
 
 SCHEMA_VERSION=1
-MODE=""
 CURRENT_PHASE=""
 COMPLETED_PHASES=""
 DOMAIN=""
@@ -28,9 +25,22 @@ STALWART_SSH_HOST=""
 STALWART_SSH_USER="root"
 TUNNEL_LOCAL_PORT="18080"
 WEBADMIN_REMOTE_PORT="8080"
-PENDING_DNS="0"
-PENDING_REVERSE_DNS="0"
 UPDATED_AT=""
+
+ARG_DOMAIN_SET="0"
+ARG_PUBLIC_TOKEN_SET="0"
+ARG_GLUE_API_TOKEN_SET="0"
+ARG_NO_EMAIL_SET="0"
+ARG_PROFILE_SET="0"
+ARG_SSH_PUBKEY_FILE_SET="0"
+ARG_ENABLE_SSH_LOCKDOWN_SET="0"
+ARG_ENABLE_FPUSH_SET="0"
+ARG_TURN_PUBLIC_IP_SET="0"
+ARG_STALWART_SSH_HOST_SET="0"
+ARG_STALWART_SSH_USER_SET="0"
+ARG_TUNNEL_LOCAL_PORT_SET="0"
+ARG_WEBADMIN_REMOTE_PORT_SET="0"
+LOCK_FD=""
 
 info() { printf '• %s\n' "$*"; }
 warn() { printf 'WARN: %s\n' "$*" >&2; }
@@ -75,6 +85,23 @@ EOF
 
 need_root() {
   [[ "${EUID}" -eq 0 ]] || die "run as root"
+}
+
+release_install_lock() {
+  [[ -n "${LOCK_FD}" ]] || return 0
+  flock -u "${LOCK_FD}" >/dev/null 2>&1 || true
+  eval "exec ${LOCK_FD}>&-"
+  LOCK_FD=""
+}
+
+acquire_install_lock() {
+  command -v flock >/dev/null 2>&1 || die "flock is required"
+  mkdir -p "$(dirname "$LOCK_FILE")"
+  exec {LOCK_FD}> "$LOCK_FILE"
+  flock -n "$LOCK_FD" || die "another install, upgrade, or uninstall is already running.
+
+Wait for it to finish or stop it first, then rerun this command."
+  trap release_install_lock EXIT
 }
 
 now_utc() {
@@ -150,13 +177,9 @@ write_state_json() {
 
   local public_present=false
   local glue_present=false
-  local pending_dns=false
-  local pending_reverse_dns=false
   local ssh_lockdown_applied=false
   [[ "$(have_public_token && echo 1 || echo 0)" == "1" ]] && public_present=true
   [[ "$(have_glue_api_token && echo 1 || echo 0)" == "1" ]] && glue_present=true
-  [[ "$PENDING_DNS" == "1" ]] && pending_dns=true
-  [[ "$PENDING_REVERSE_DNS" == "1" ]] && pending_reverse_dns=true
   [[ "$SSH_LOCKDOWN_APPLIED" == "1" ]] && ssh_lockdown_applied=true
 
   mkdir -p "$STATE_DIR"
@@ -168,8 +191,6 @@ write_state_json() {
   "completed_phases": [${completed_json}],
   "domain": "$(json_escape "$DOMAIN")",
   "profile": "$(json_escape "$PROFILE")",
-  "pending_dns_records": ${pending_dns},
-  "pending_reverse_dns": ${pending_reverse_dns},
   "ssh_lockdown_applied": ${ssh_lockdown_applied},
   "secret_presence": {
     "public_token": ${public_present},
@@ -188,11 +209,6 @@ save_state() {
     write_shell_var "SCHEMA_VERSION" "$SCHEMA_VERSION"
     write_shell_var "CURRENT_PHASE" "$CURRENT_PHASE"
     write_shell_var "COMPLETED_PHASES" "$COMPLETED_PHASES"
-    write_shell_var "DOMAIN" "$DOMAIN"
-    write_shell_var "NO_EMAIL" "$NO_EMAIL"
-    write_shell_var "PROFILE" "$PROFILE"
-    write_shell_var "PENDING_DNS" "$PENDING_DNS"
-    write_shell_var "PENDING_REVERSE_DNS" "$PENDING_REVERSE_DNS"
     write_shell_var "SSH_LOCKDOWN_APPLIED" "$SSH_LOCKDOWN_APPLIED"
     write_shell_var "UPDATED_AT" "$UPDATED_AT"
   } >"$STATE_FILE"
@@ -233,51 +249,6 @@ load_config() {
   source "$CONFIG_FILE"
 }
 
-resume_hint() {
-  case "$CURRENT_PHASE" in
-    checkpoint_webadmin_domain)
-      printf 'rerun the same sudo ./install.sh install ... command\n'
-      ;;
-    checkpoint_glue_api_token)
-      printf 'rerun the same sudo ./install.sh install ... command\n'
-      ;;
-    checkpoint_dns_records)
-      printf 'rerun the same sudo ./install.sh install ... command\n'
-      ;;
-    checkpoint_reverse_dns)
-      printf 'rerun the same sudo ./install.sh install ... command\n'
-      ;;
-    complete)
-      printf 'sudo ./install.sh verify\n'
-      ;;
-    *)
-      printf 'rerun the same sudo ./install.sh install ... command\n'
-      ;;
-  esac
-}
-
-print_tunnel_block() {
-  local host user local_port remote_port
-  host="${STALWART_SSH_HOST:-$DOMAIN}"
-  user="${STALWART_SSH_USER:-root}"
-  local_port="${TUNNEL_LOCAL_PORT:-18080}"
-  remote_port="${WEBADMIN_REMOTE_PORT:-8080}"
-
-  printf '1. On your laptop, start this SSH tunnel:\n'
-  printf '   ssh -L %s:127.0.0.1:%s %s@%s\n' "$local_port" "$remote_port" "$user" "$host"
-  printf '2. Open this URL in your browser:\n'
-  printf '   http://127.0.0.1:%s/login\n' "$local_port"
-}
-
-print_saved_progress_block() {
-  cat <<EOF
-Saved progress:
-  Config: ${CONFIG_FILE}
-  State:  ${STATE_JSON}
-If the script is interrupted, rerun the same install command.
-EOF
-}
-
 saved_install_exists() {
   [[ -f "$CONFIG_FILE" || -f "$STATE_FILE" ]]
 }
@@ -291,71 +262,43 @@ Start with one of:
   sudo ./install.sh install --domain example.com --no-email"
 }
 
-load_saved_config_value() {
-  local key="$1"
-  (
-    # shellcheck disable=SC1090
-    source "$CONFIG_FILE"
-    case "$key" in
-      DOMAIN) printf '%s' "${DOMAIN:-}" ;;
-      NO_EMAIL) printf '%s' "${NO_EMAIL:-}" ;;
-      PUBLIC_TOKEN) printf '%s' "${PUBLIC_TOKEN:-}" ;;
-      PROFILE) printf '%s' "${PROFILE:-}" ;;
-      SSH_PUBKEY_FILE) printf '%s' "${SSH_PUBKEY_FILE:-}" ;;
-      ENABLE_SSH_LOCKDOWN) printf '%s' "${ENABLE_SSH_LOCKDOWN:-}" ;;
-      ENABLE_FPUSH) printf '%s' "${ENABLE_FPUSH:-}" ;;
-      TURN_PUBLIC_IP) printf '%s' "${TURN_PUBLIC_IP:-}" ;;
-      STALWART_SSH_HOST) printf '%s' "${STALWART_SSH_HOST:-}" ;;
-      STALWART_SSH_USER) printf '%s' "${STALWART_SSH_USER:-}" ;;
-      TUNNEL_LOCAL_PORT) printf '%s' "${TUNNEL_LOCAL_PORT:-}" ;;
-      WEBADMIN_REMOTE_PORT) printf '%s' "${WEBADMIN_REMOTE_PORT:-}" ;;
-    esac
-  )
-}
+validate_install_matches_saved_config() {
+  local cli_domain="$1"
+  local cli_no_email="$2"
+  local cli_public_token="$3"
+  local cli_glue_api_token="$4"
+  local cli_profile="$5"
+  local cli_ssh_pubkey_file="$6"
+  local cli_enable_ssh_lockdown="$7"
+  local cli_enable_fpush="$8"
+  local cli_turn_public_ip="$9"
+  local cli_stalwart_ssh_host="${10}"
+  local cli_stalwart_ssh_user="${11}"
+  local cli_tunnel_local_port="${12}"
+  local cli_webadmin_remote_port="${13}"
 
-ensure_install_matches_saved_config() {
-  saved_install_exists || return 1
-  [[ -f "$CONFIG_FILE" && -f "$STATE_FILE" ]] || die "found partial saved install metadata.
-
-Remove these if you intentionally want to start over:
-  ${CONFIG_FILE}
-  ${STATE_DIR}"
-
-  local saved_domain saved_no_email saved_public_token saved_profile
-  local saved_ssh_pubkey_file saved_enable_ssh_lockdown saved_enable_fpush saved_turn_public_ip
-  local saved_stalwart_ssh_host saved_stalwart_ssh_user saved_tunnel_local_port saved_webadmin_remote_port
-
-  saved_domain="$(load_saved_config_value DOMAIN)"
-  saved_no_email="$(load_saved_config_value NO_EMAIL)"
-  saved_public_token="$(load_saved_config_value PUBLIC_TOKEN)"
-  saved_profile="$(load_saved_config_value PROFILE)"
-  saved_ssh_pubkey_file="$(load_saved_config_value SSH_PUBKEY_FILE)"
-  saved_enable_ssh_lockdown="$(load_saved_config_value ENABLE_SSH_LOCKDOWN)"
-  saved_enable_fpush="$(load_saved_config_value ENABLE_FPUSH)"
-  saved_turn_public_ip="$(load_saved_config_value TURN_PUBLIC_IP)"
-  saved_stalwart_ssh_host="$(load_saved_config_value STALWART_SSH_HOST)"
-  saved_stalwart_ssh_user="$(load_saved_config_value STALWART_SSH_USER)"
-  saved_tunnel_local_port="$(load_saved_config_value TUNNEL_LOCAL_PORT)"
-  saved_webadmin_remote_port="$(load_saved_config_value WEBADMIN_REMOTE_PORT)"
-
-  [[ "$DOMAIN" == "$saved_domain" ]] || die "a saved install already exists for domain ${saved_domain}, not ${DOMAIN}.
+  if [[ "$ARG_DOMAIN_SET" == "1" && "$cli_domain" != "$DOMAIN" ]]; then
+    die "a saved install already exists for domain ${DOMAIN}, not ${cli_domain}.
 
 If you intentionally want to start over from scratch, remove:
   ${CONFIG_FILE}
   ${STATE_DIR}"
-  [[ "$NO_EMAIL" == "$saved_no_email" ]] || die "the saved install mode does not match this command"
-  [[ "$PUBLIC_TOKEN" == "$saved_public_token" ]] || die "the saved public token does not match this command"
-  [[ "$PROFILE" == "$saved_profile" ]] || die "the saved profile does not match this command"
-  [[ "$SSH_PUBKEY_FILE" == "$saved_ssh_pubkey_file" ]] || die "the saved --ssh-pubkey-file does not match this command"
-  [[ "$ENABLE_SSH_LOCKDOWN" == "$saved_enable_ssh_lockdown" ]] || die "the saved SSH-lockdown setting does not match this command"
-  [[ "$ENABLE_FPUSH" == "$saved_enable_fpush" ]] || die "the saved fpush setting does not match this command"
-  [[ "$TURN_PUBLIC_IP" == "$saved_turn_public_ip" ]] || die "the saved TURN public IP does not match this command"
-  [[ "$STALWART_SSH_HOST" == "$saved_stalwart_ssh_host" ]] || die "the saved Stalwart SSH host does not match this command"
-  [[ "$STALWART_SSH_USER" == "$saved_stalwart_ssh_user" ]] || die "the saved Stalwart SSH user does not match this command"
-  [[ "$TUNNEL_LOCAL_PORT" == "$saved_tunnel_local_port" ]] || die "the saved tunnel local port does not match this command"
-  [[ "$WEBADMIN_REMOTE_PORT" == "$saved_webadmin_remote_port" ]] || die "the saved Webadmin remote port does not match this command"
+  fi
+  [[ "$ARG_NO_EMAIL_SET" != "1" || "$cli_no_email" == "$NO_EMAIL" ]] || die "the saved install mode does not match this command"
+  [[ "$ARG_PUBLIC_TOKEN_SET" != "1" || "$cli_public_token" == "$PUBLIC_TOKEN" ]] || die "the saved public token does not match this command"
+  [[ "$ARG_PROFILE_SET" != "1" || "$cli_profile" == "$PROFILE" ]] || die "the saved profile does not match this command"
+  [[ "$ARG_SSH_PUBKEY_FILE_SET" != "1" || "$cli_ssh_pubkey_file" == "$SSH_PUBKEY_FILE" ]] || die "the saved --ssh-pubkey-file does not match this command"
+  [[ "$ARG_ENABLE_SSH_LOCKDOWN_SET" != "1" || "$cli_enable_ssh_lockdown" == "$ENABLE_SSH_LOCKDOWN" ]] || die "the saved SSH-lockdown setting does not match this command"
+  [[ "$ARG_ENABLE_FPUSH_SET" != "1" || "$cli_enable_fpush" == "$ENABLE_FPUSH" ]] || die "the saved fpush setting does not match this command"
+  [[ "$ARG_TURN_PUBLIC_IP_SET" != "1" || "$cli_turn_public_ip" == "$TURN_PUBLIC_IP" ]] || die "the saved TURN public IP does not match this command"
+  [[ "$ARG_STALWART_SSH_HOST_SET" != "1" || "$cli_stalwart_ssh_host" == "$STALWART_SSH_HOST" ]] || die "the saved Stalwart SSH host does not match this command"
+  [[ "$ARG_STALWART_SSH_USER_SET" != "1" || "$cli_stalwart_ssh_user" == "$STALWART_SSH_USER" ]] || die "the saved Stalwart SSH user does not match this command"
+  [[ "$ARG_TUNNEL_LOCAL_PORT_SET" != "1" || "$cli_tunnel_local_port" == "$TUNNEL_LOCAL_PORT" ]] || die "the saved tunnel local port does not match this command"
+  [[ "$ARG_WEBADMIN_REMOTE_PORT_SET" != "1" || "$cli_webadmin_remote_port" == "$WEBADMIN_REMOTE_PORT" ]] || die "the saved Webadmin remote port does not match this command"
 
-  return 0
+  if [[ "$ARG_GLUE_API_TOKEN_SET" == "1" ]]; then
+    GLUE_API_TOKEN="$cli_glue_api_token"
+  fi
 }
 
 domain_looks_plausible() {
@@ -571,166 +514,6 @@ Stop the conflicting service first, then rerun install."
   fi
 }
 
-status_checkpoint_text() {
-  case "$CURRENT_PHASE" in
-    preflight)
-      cat <<EOF
-Status: preflight
-
-The installer has started but has not finished its safety checks yet.
-Next command:
-  $(resume_hint)
-EOF
-      ;;
-    host_setup)
-      cat <<EOF
-Status: host_setup
-
-The install is in the host-setup phase.
-If this phase was interrupted, continue it by rerunning the same install command:
-  $(resume_hint)
-EOF
-      ;;
-    firewall_setup)
-      cat <<EOF
-Status: firewall_setup
-
-The install is applying local firewall and ACME port-forwarding rules.
-If this phase was interrupted, continue it by rerunning the same install command:
-  $(resume_hint)
-EOF
-      ;;
-    ejabberd_install)
-      cat <<EOF
-Status: ejabberd_install
-
-The install is at the ejabberd phase.
-If ejabberd was interrupted or failed mid-run, continue with:
-  $(resume_hint)
-EOF
-      ;;
-    stalwart_install)
-      cat <<EOF
-Status: stalwart_install
-
-The install is at the Stalwart phase.
-If Stalwart was interrupted or failed mid-run, continue with:
-  $(resume_hint)
-EOF
-      ;;
-    checkpoint_webadmin_domain)
-      cat <<EOF
-Status: waiting_for_domain_creation
-
-The install is paused safely. Do this from your laptop, then come back here.
-
-Action required:
-$(print_tunnel_block)
-3. Keep that tunnel running while you use Webadmin.
-4. Login with:
-   Username: admin
-   Password command: sudo cat /root/stalwart-secrets/fallback_admin_password.txt
-5. Go to: Management -> Directory -> Domains
-6. Click to create a new domain, then enter exactly:
-   ${DOMAIN}
-7. Make sure the new domain appears in the list.
-8. Resume with:
-   $(resume_hint)
-
-$(print_saved_progress_block)
-EOF
-      ;;
-    checkpoint_glue_api_token)
-      cat <<EOF
-Status: waiting_for_glue_api_token
-
-The install is paused safely. Do this from your laptop, then come back here.
-
-Action required:
-$(print_tunnel_block)
-3. Keep that tunnel running while you use Webadmin.
-4. Login with:
-   Username: admin
-   Password command: sudo cat /root/stalwart-secrets/fallback_admin_password.txt
-5. Create an API key principal:
-   Path: Management -> API Keys
-   Name: email-glue
-   Type: apiKey
-   Roles: admin
-6. Copy the secret value and save it now. Most admin UIs only show it once.
-7. Resume with:
-   $(resume_hint)
-
-$(print_saved_progress_block)
-EOF
-      ;;
-    checkpoint_dns_records)
-      cat <<EOF
-Status: waiting_for_dns_records
-
-The install is paused safely. Do this from your laptop or DNS provider, then come back here.
-
-Action required:
-$(print_tunnel_block)
-3. Keep that tunnel running while you use Webadmin.
-4. Login with:
-   Username: admin
-   Password command: sudo cat /root/stalwart-secrets/fallback_admin_password.txt
-5. Go to: Management -> Directory -> Domains -> ${DOMAIN} -> DNS Records
-6. In your DNS provider, create every record Stalwart shows there.
-   Use the names and values exactly as shown. Do not invent your own MX / SPF / DMARC / DKIM values.
-7. DNS propagation can take time. After you have saved the records in your DNS provider, the install can continue.
-8. Resume with:
-   $(resume_hint)
-
-$(print_saved_progress_block)
-EOF
-      ;;
-    checkpoint_reverse_dns)
-      local public_ip
-      public_ip="$(detect_public_ipv4)"
-      cat <<EOF
-Status: waiting_for_reverse_dns
-
-The install is paused safely. Do this in your hosting provider panel, then come back here.
-
-Action required:
-1. In your hosting or VPS provider control panel, find the server's public IPv4${public_ip:+. The installer detected: ${public_ip}}.
-2. Look for a setting called PTR, reverse DNS, rDNS, or IP hostname.
-3. Set that PTR / reverse-DNS record so the IP points to:
-   ${DOMAIN}
-4. Make sure the forward A / AAAA record for ${DOMAIN} points back to the same server.
-5. Resume with:
-   $(resume_hint)
-
-$(print_saved_progress_block)
-EOF
-      ;;
-    complete)
-      cat <<EOF
-Status: complete
-
-The installer has finished its tracked phases.
-Next commands:
-  sudo ./install.sh verify
-$([[ "$NO_EMAIL" == "0" ]] && printf '  sudo ./install.sh doctor\n')
-
-Saved progress:
-  Config: ${CONFIG_FILE}
-  State:  ${STATE_JSON}
-EOF
-      ;;
-    *)
-      cat <<EOF
-Status: ${CURRENT_PHASE}
-
-Next command:
-  $(resume_hint)
-EOF
-      ;;
-  esac
-}
-
 require_debian() {
   [[ -r /etc/os-release ]] || die "missing /etc/os-release"
   # shellcheck disable=SC1091
@@ -781,103 +564,126 @@ parse_install_args() {
       --domain)
         [[ $# -ge 2 ]] || die "--domain requires a value"
         DOMAIN="$2"
+        ARG_DOMAIN_SET="1"
         shift 2
         ;;
       --domain=*)
         DOMAIN="${1#*=}"
+        ARG_DOMAIN_SET="1"
         shift
         ;;
       --public-token)
         [[ $# -ge 2 ]] || die "--public-token requires a value"
         PUBLIC_TOKEN="$2"
+        ARG_PUBLIC_TOKEN_SET="1"
         shift 2
         ;;
       --public-token=*)
         PUBLIC_TOKEN="${1#*=}"
+        ARG_PUBLIC_TOKEN_SET="1"
         shift
         ;;
       --glue-api-token)
         [[ $# -ge 2 ]] || die "--glue-api-token requires a value"
         GLUE_API_TOKEN="$2"
+        ARG_GLUE_API_TOKEN_SET="1"
         shift 2
         ;;
       --glue-api-token=*)
         GLUE_API_TOKEN="${1#*=}"
+        ARG_GLUE_API_TOKEN_SET="1"
         shift
         ;;
       --no-email)
         NO_EMAIL="1"
+        ARG_NO_EMAIL_SET="1"
         shift
         ;;
       --profile)
         [[ $# -ge 2 ]] || die "--profile requires a value"
         PROFILE="$2"
+        ARG_PROFILE_SET="1"
         shift 2
         ;;
       --profile=*)
         PROFILE="${1#*=}"
+        ARG_PROFILE_SET="1"
         shift
         ;;
       --ssh-pubkey-file)
         [[ $# -ge 2 ]] || die "--ssh-pubkey-file requires a value"
         SSH_PUBKEY_FILE="$2"
+        ARG_SSH_PUBKEY_FILE_SET="1"
         shift 2
         ;;
       --ssh-pubkey-file=*)
         SSH_PUBKEY_FILE="${1#*=}"
+        ARG_SSH_PUBKEY_FILE_SET="1"
         shift
         ;;
       --enable-ssh-lockdown)
         ENABLE_SSH_LOCKDOWN="1"
+        ARG_ENABLE_SSH_LOCKDOWN_SET="1"
         shift
         ;;
       --enable-fpush)
         ENABLE_FPUSH="1"
+        ARG_ENABLE_FPUSH_SET="1"
         shift
         ;;
       --turn-public-ip)
         [[ $# -ge 2 ]] || die "--turn-public-ip requires a value"
         TURN_PUBLIC_IP="$2"
+        ARG_TURN_PUBLIC_IP_SET="1"
         shift 2
         ;;
       --turn-public-ip=*)
         TURN_PUBLIC_IP="${1#*=}"
+        ARG_TURN_PUBLIC_IP_SET="1"
         shift
         ;;
       --stalwart-ssh-host)
         [[ $# -ge 2 ]] || die "--stalwart-ssh-host requires a value"
         STALWART_SSH_HOST="$2"
+        ARG_STALWART_SSH_HOST_SET="1"
         shift 2
         ;;
       --stalwart-ssh-host=*)
         STALWART_SSH_HOST="${1#*=}"
+        ARG_STALWART_SSH_HOST_SET="1"
         shift
         ;;
       --stalwart-ssh-user)
         [[ $# -ge 2 ]] || die "--stalwart-ssh-user requires a value"
         STALWART_SSH_USER="$2"
+        ARG_STALWART_SSH_USER_SET="1"
         shift 2
         ;;
       --stalwart-ssh-user=*)
         STALWART_SSH_USER="${1#*=}"
+        ARG_STALWART_SSH_USER_SET="1"
         shift
         ;;
       --tunnel-local-port)
         [[ $# -ge 2 ]] || die "--tunnel-local-port requires a value"
         TUNNEL_LOCAL_PORT="$2"
+        ARG_TUNNEL_LOCAL_PORT_SET="1"
         shift 2
         ;;
       --tunnel-local-port=*)
         TUNNEL_LOCAL_PORT="${1#*=}"
+        ARG_TUNNEL_LOCAL_PORT_SET="1"
         shift
         ;;
       --webadmin-remote-port)
         [[ $# -ge 2 ]] || die "--webadmin-remote-port requires a value"
         WEBADMIN_REMOTE_PORT="$2"
+        ARG_WEBADMIN_REMOTE_PORT_SET="1"
         shift 2
         ;;
       --webadmin-remote-port=*)
         WEBADMIN_REMOTE_PORT="${1#*=}"
+        ARG_WEBADMIN_REMOTE_PORT_SET="1"
         shift
         ;;
       -h|--help)
@@ -978,8 +784,6 @@ run_ejabberd_phase() {
 
   append_completed_phase "ejabberd_install"
   if [[ "$NO_EMAIL" == "1" ]]; then
-    PENDING_DNS="0"
-    PENDING_REVERSE_DNS="0"
     CURRENT_PHASE="complete"
   else
     CURRENT_PHASE="stalwart_install"
@@ -1014,7 +818,6 @@ run_stalwart_phase() {
 run_dns_checkpoint() {
   phase_completed "checkpoint_dns_records" && return 0
   CURRENT_PHASE="checkpoint_dns_records"
-  PENDING_DNS="1"
   save_state
 
   cat <<EOF
@@ -1034,7 +837,6 @@ When you have saved the DNS records in your DNS provider, come back here.
 EOF
 
   read -r -p "Press Enter after the DNS records have been created in your DNS provider..." _
-  PENDING_DNS="0"
   append_completed_phase "checkpoint_dns_records"
   save_state
 }
@@ -1042,7 +844,6 @@ EOF
 run_reverse_dns_checkpoint() {
   phase_completed "checkpoint_reverse_dns" && return 0
   CURRENT_PHASE="checkpoint_reverse_dns"
-  PENDING_REVERSE_DNS="1"
   save_state
 
   local public_ip=""
@@ -1060,7 +861,6 @@ When you have saved the PTR / reverse DNS change in your hosting provider, come 
 EOF
 
   read -r -p "Press Enter after PTR / reverse DNS has been configured..." _
-  PENDING_REVERSE_DNS="0"
   append_completed_phase "checkpoint_reverse_dns"
   save_state
 }
@@ -1074,8 +874,6 @@ run_optional_ssh_lockdown() {
 }
 
 finalize_install() {
-  PENDING_DNS="0"
-  PENDING_REVERSE_DNS="0"
   CURRENT_PHASE="complete"
   run_optional_ssh_lockdown
   save_state
@@ -1170,9 +968,46 @@ continue_install_from_state() {
 cmd_install() {
   parse_install_args "$@"
   need_root
-  validate_install_args
+  acquire_install_lock
 
-  if ensure_install_matches_saved_config; then
+  if saved_install_exists; then
+    [[ -f "$CONFIG_FILE" && -f "$STATE_FILE" ]] || die "found partial saved install metadata.
+
+Remove these if you intentionally want to start over:
+  ${CONFIG_FILE}
+  ${STATE_DIR}"
+
+    local cli_domain="$DOMAIN"
+    local cli_no_email="$NO_EMAIL"
+    local cli_public_token="$PUBLIC_TOKEN"
+    local cli_glue_api_token="$GLUE_API_TOKEN"
+    local cli_profile="$PROFILE"
+    local cli_ssh_pubkey_file="$SSH_PUBKEY_FILE"
+    local cli_enable_ssh_lockdown="$ENABLE_SSH_LOCKDOWN"
+    local cli_enable_fpush="$ENABLE_FPUSH"
+    local cli_turn_public_ip="$TURN_PUBLIC_IP"
+    local cli_stalwart_ssh_host="$STALWART_SSH_HOST"
+    local cli_stalwart_ssh_user="$STALWART_SSH_USER"
+    local cli_tunnel_local_port="$TUNNEL_LOCAL_PORT"
+    local cli_webadmin_remote_port="$WEBADMIN_REMOTE_PORT"
+
+    load_config
+    validate_install_matches_saved_config \
+      "$cli_domain" \
+      "$cli_no_email" \
+      "$cli_public_token" \
+      "$cli_glue_api_token" \
+      "$cli_profile" \
+      "$cli_ssh_pubkey_file" \
+      "$cli_enable_ssh_lockdown" \
+      "$cli_enable_fpush" \
+      "$cli_turn_public_ip" \
+      "$cli_stalwart_ssh_host" \
+      "$cli_stalwart_ssh_user" \
+      "$cli_tunnel_local_port" \
+      "$cli_webadmin_remote_port"
+
+    validate_install_args
     load_state
     info "Found saved install state at phase ${CURRENT_PHASE}; continuing the same install command"
     save_config
@@ -1180,27 +1015,20 @@ cmd_install() {
     return
   fi
 
+  validate_install_args
   save_config
 
   CURRENT_PHASE="preflight"
   COMPLETED_PHASES=""
-  PENDING_DNS="0"
-  PENDING_REVERSE_DNS="0"
   SSH_LOCKDOWN_APPLIED="0"
   save_state
 
   continue_install_from_state
 }
 
-cmd_resume() {
-  die "resume is no longer needed.
-
-Run the same install command again instead, for example:
-  sudo ./install.sh install --domain example.com --public-token YOUR_TOKEN"
-}
-
 cmd_upgrade() {
   need_root
+  acquire_install_lock
   require_saved_install
   load_config
   load_state
@@ -1208,6 +1036,12 @@ cmd_upgrade() {
   [[ "$CURRENT_PHASE" == "complete" ]] || die "the saved install is not complete yet.
 
 Rerun the same install command again instead."
+
+  if [[ "$ENABLE_FPUSH" == "1" && ! -f /opt/fpush/settings.json ]]; then
+    die "upgrade cannot safely rerun the fpush path because /opt/fpush/settings.json is missing.
+
+Either restore the existing fpush settings first or rerun ejabberd/install.sh manually."
+  fi
 
   local backup_state
   local backup_json
@@ -1238,15 +1072,6 @@ Rerun the same install command again instead."
   info "Upgrade failed; restored the saved install state"
   return 1
 }
-
-cmd_status() {
-  need_root
-  require_saved_install
-  load_config
-  load_state
-  status_checkpoint_text
-}
-
 check_active_service() {
   local svc="$1"
   if systemctl is-active --quiet "$svc"; then
@@ -1293,6 +1118,12 @@ maybe_dig() {
   command -v dig >/dev/null 2>&1
 }
 
+normalize_dns_name() {
+  local name="${1:-}"
+  name="${name%.}"
+  printf '%s\n' "${name,,}"
+}
+
 cmd_doctor() {
   need_root
   require_saved_install
@@ -1319,10 +1150,21 @@ cmd_doctor() {
 
   if maybe_dig; then
     if [[ "$NO_EMAIL" == "0" ]]; then
-      if dig +short MX "$DOMAIN" | grep -q .; then
-        printf 'PASS: MX record exists for %s\n' "$DOMAIN"
-      else
+      local normalized_domain mx_targets mx_targets_normalized ptr_target public_ip
+      normalized_domain="$(normalize_dns_name "$DOMAIN")"
+
+      mx_targets="$(dig +short MX "$DOMAIN" | awk '{$1=""; sub(/^ /,""); print $0}')"
+      mx_targets_normalized="$(printf '%s\n' "$mx_targets" | while IFS= read -r target; do
+        [[ -n "$target" ]] || continue
+        normalize_dns_name "$target"
+      done)"
+      if [[ -z "$mx_targets" ]]; then
         printf 'WARN: MX record not found for %s. Copy the DNS records from Stalwart Webadmin and wait for propagation.\n' "$DOMAIN"
+        warned=1
+      elif printf '%s\n' "$mx_targets_normalized" | grep -Fxq "$normalized_domain"; then
+        printf 'PASS: MX record points to %s\n' "$DOMAIN"
+      else
+        printf 'WARN: MX records exist for %s, but they do not point to %s. Check the values shown in Stalwart Webadmin.\n' "$DOMAIN" "$DOMAIN"
         warned=1
       fi
 
@@ -1340,13 +1182,16 @@ cmd_doctor() {
         warned=1
       fi
 
-      local public_ip=""
       public_ip="$(detect_public_ipv4)"
       if [[ -n "$public_ip" ]]; then
-        if dig +short -x "$public_ip" | grep -q .; then
-          printf 'PASS: PTR record exists for %s\n' "$public_ip"
-        else
+        ptr_target="$(dig +short -x "$public_ip" | head -n1)"
+        if [[ -z "$ptr_target" ]]; then
           printf 'WARN: PTR record not found for %s. Set PTR / reverse DNS in your hosting provider panel, not your normal DNS zone.\n' "$public_ip"
+          warned=1
+        elif [[ "$(normalize_dns_name "$ptr_target")" == "$normalized_domain" ]]; then
+          printf 'PASS: PTR record points to %s\n' "$DOMAIN"
+        else
+          printf 'WARN: PTR record for %s points to %s, not %s. Fix PTR / reverse DNS in your hosting provider panel.\n' "$public_ip" "$(normalize_dns_name "$ptr_target")" "$DOMAIN"
           warned=1
         fi
       else
@@ -1360,7 +1205,7 @@ cmd_doctor() {
   fi
 
   if [[ "$CURRENT_PHASE" != "complete" ]]; then
-        printf 'WARN: install flow is still waiting at phase %s. Rerun the same install command to continue.\n' "$CURRENT_PHASE"
+    printf 'WARN: install flow is still waiting at phase %s. Rerun the same install command to continue.\n' "$CURRENT_PHASE"
     warned=1
   fi
 
@@ -1380,14 +1225,8 @@ main() {
     install)
       cmd_install "$@"
       ;;
-    resume)
-      cmd_resume "$@"
-      ;;
     upgrade)
       cmd_upgrade
-      ;;
-    status)
-      cmd_status
       ;;
     doctor)
       cmd_doctor

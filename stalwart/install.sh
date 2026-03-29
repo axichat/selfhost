@@ -14,16 +14,12 @@ PUBLIC_TOKEN_OVERRIDE=""
 PUBLIC_TOKEN_OVERRIDE_SET="0"
 GLUE_API_TOKEN_OVERRIDE=""
 GLUE_API_TOKEN_OVERRIDE_SET="0"
-CHECKPOINT_MODE="0"
 : "${SKIP_FIREWALL:=0}"
 : "${SKIP_DNS_GUIDANCE:=0}"
 
-CHECKPOINT_WEBADMIN_DOMAIN_RC=40
-CHECKPOINT_GLUE_API_TOKEN_RC=41
-
 usage() {
   cat <<'EOF'
-Usage: install.sh [--public-token[=TOKEN]] [--no-public-token] [--glue-api-token=TOKEN] [--checkpoint-mode]
+Usage: install.sh [--public-token[=TOKEN]] [--no-public-token] [--glue-api-token=TOKEN]
 
 Options:
   --public-token[=TOKEN]  Require X-Client-Token / X-Auth-Token for email-glue.
@@ -34,7 +30,6 @@ Options:
                           Not recommended on an internet-reachable host.
   --glue-api-token=TOKEN  Use this Stalwart API key for email-glue and persist it.
                           If omitted, reuse glue_api_token.txt when valid, else prompt.
-  --checkpoint-mode       Print manual instructions and exit instead of waiting for input.
   -h, --help              Show this help.
 EOF
 }
@@ -64,10 +59,6 @@ while [[ $# -gt 0 ]]; do
       if [[ -n "$GLUE_API_TOKEN_OVERRIDE" ]]; then
         GLUE_API_TOKEN_OVERRIDE_SET="1"
       fi
-      shift
-      ;;
-    --checkpoint-mode)
-      CHECKPOINT_MODE="1"
       shift
       ;;
     -h|--help)
@@ -249,10 +240,6 @@ EOF
     warn "STALWART_SSH_HOST is not set. The tunnel command above will not work until you set it."
   fi
 
-  if [[ "$CHECKPOINT_MODE" == "1" ]]; then
-    exit "$CHECKPOINT_WEBADMIN_DOMAIN_RC"
-  fi
-
   while true; do
     read -r -p "Press Enter after creating domain ${DOMAIN} in Webadmin..." _
     if domain_exists; then
@@ -307,10 +294,6 @@ EOF
 
   if [[ -z "${STALWART_SSH_HOST}" ]]; then
     warn "STALWART_SSH_HOST is not set. The tunnel command above will not work until you set it."
-  fi
-
-  if [[ "$CHECKPOINT_MODE" == "1" ]]; then
-    exit "$CHECKPOINT_GLUE_API_TOKEN_RC"
   fi
 
   while true; do

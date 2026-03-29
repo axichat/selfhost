@@ -11,6 +11,7 @@ sudo ../install.sh install --domain example.com --public-token YOUR_TOKEN
 If you are following the normal self-host flow, stop here and go back to [`../README.md`](../README.md).
 
 In that normal root-wrapper flow, the installer waits in the same terminal for the Webadmin, DNS, and PTR steps. If it gets interrupted, rerun the same root `install` command.
+That same root wrapper also owns `upgrade`, `verify`, `doctor`, and `uninstall`; this component script is only for direct/manual work.
 
 This README covers direct use of [`./install.sh`](install.sh) and the email-specific details behind that wrapper. The component script still expects `DOMAIN` to be set.
 
@@ -41,6 +42,7 @@ Default behavior:
 - if you only pass bare `--public-token`, the component script reuses or generates a client token
 - reuses `/root/stalwart-secrets/glue_api_token.txt` when valid
 - otherwise pauses and tells you how to create the Stalwart Admin API key that `email-glue` uses
+- waits in the same terminal for the Webadmin domain/API-key steps instead of exiting into a separate resume flow
 
 This manual/component script does not enforce the same UX as the root wrapper:
 
@@ -70,7 +72,7 @@ Recommended invocations:
 ## Flags
 
 ```bash
-./install.sh [--public-token[=TOKEN]] [--no-public-token] [--glue-api-token=TOKEN] [--checkpoint-mode]
+./install.sh [--public-token[=TOKEN]] [--no-public-token] [--glue-api-token=TOKEN]
 ```
 
 - `--public-token`
@@ -90,10 +92,6 @@ Recommended invocations:
 - Uses and persists this Stalwart Admin API key for `email-glue`.
 - Without this flag, installer reuses `/root/stalwart-secrets/glue_api_token.txt` when valid.
 - If the file is missing or invalid, the installer pauses and tells you how to create a new one in Webadmin.
-
-- `--checkpoint-mode`
-- Internal wrapper-oriented mode.
-- Prints the manual Webadmin instructions and exits instead of waiting for input.
 
 ## Stalwart Webadmin token flow
 
@@ -178,6 +176,7 @@ Defaults used by the installer/runtime:
 - Installer rewrites config/unit/env files and restarts services.
 - `email-glue` is restarted, so updated token settings apply immediately.
 - Domain creation and DNS records are handled in Webadmin. If the domain does not exist yet, the installer pauses and tells you what to do.
+- In the normal root-wrapper flow, `sudo ./install.sh upgrade` reuses the saved wrapper config and re-runs this component underneath.
 
 ## Key files written
 

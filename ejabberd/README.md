@@ -27,6 +27,8 @@ This README is only for direct/manual ejabberd work. This folder has the compone
 - Optional env: `EJABBERD_VERSION_PREFIX=26.` to pin the apt version prefix
 - Optional env: `ENABLE_FPUSH=yes|no` to pre-answer the fpush prompt
 - Optional env: `TURN_IPV4=1.2.3.4` to pre-answer the TURN IP prompt
+- Re-run behavior for `fpush`:
+- if `/opt/fpush/settings.json` already exists and its APNS cert path is still valid, reruns reuse the saved fpush secret and APNS settings instead of asking for them again
 - Interactive prompts:
 - `Enable fpush (XEP-0357) component? [y/N]`
 - fpush component secret if you enable fpush
@@ -143,6 +145,8 @@ If you enable it, the installer builds fpush from source and asks for:
 - APNS .p12 path
 - APNS topic (bundle id)
 - APNS environment (production/sandbox)
+
+On rerun or wrapper-driven `upgrade`, existing fpush installs reuse `/opt/fpush/settings.json` and the referenced APNS certificate file when they are still present. If you delete that file or move the `.p12`, the path becomes interactive again.
 
 If you do this manually, follow the same steps as in `ejabberd/install.sh` under “Installing fpush”.
 

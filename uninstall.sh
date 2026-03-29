@@ -1,0 +1,313 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_FILE="${AXICHAT_SELFHOST_CONFIG_FILE:-/etc/axichat/selfhost.env}"
+STATE_DIR="${AXICHAT_SELFHOST_STATE_DIR:-/var/lib/axichat-selfhost}"
+STATE_FILE="${STATE_DIR}/state.env"
+STATE_JSON="${STATE_DIR}/state.json"
+LOCK_FILE="${AXICHAT_SELFHOST_LOCK_FILE:-/run/lock/axichat-selfhost.lock}"
+
+ASSUME_YES="0"
+PURGE_EJABBERD_PACKAGE="1"
+DOMAIN_HINT="example.com"
+LOCK_FD=""
+
+info() { printf '• %s\n' "$*"; }
+warn() { printf 'WARN: %s\n' "$*" >&2; }
+die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+
+usage() {
+  cat <<'EOF'
+Usage:
+  sudo ./uninstall.sh [options]
+
+Default behavior:
+  - stops and removes the Axichat self-host services
+  - deletes the local app data, secrets, units, and wrapper state
+  - removes the app-specific UFW rules and port-80 redirect block
+  - purges the ejabberd package so the next demo attempt starts cleanly
+
+Options:
+  --yes                    Do not ask for confirmation.
+  --keep-ejabberd-package  Keep the ejabberd package installed.
+  -h, --help               Show this help.
+EOF
+}
+
+need_root() {
+  [[ "${EUID}" -eq 0 ]] || die "run as root"
+}
+
+release_install_lock() {
+  [[ -n "${LOCK_FD}" ]] || return 0
+  flock -u "${LOCK_FD}" >/dev/null 2>&1 || true
+  eval "exec ${LOCK_FD}>&-"
+  LOCK_FD=""
+}
+
+acquire_install_lock() {
+  command -v flock >/dev/null 2>&1 || die "flock is required"
+  mkdir -p "$(dirname "$LOCK_FILE")"
+  exec {LOCK_FD}> "$LOCK_FILE"
+  flock -n "$LOCK_FD" || die "an install, upgrade, or uninstall is already running.
+
+Stop it or wait for it to finish, then rerun uninstall."
+  trap release_install_lock EXIT
+}
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --yes)
+        ASSUME_YES="1"
+        shift
+        ;;
+      --keep-ejabberd-package)
+        PURGE_EJABBERD_PACKAGE="0"
+        shift
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        die "unknown option: $1"
+        ;;
+    esac
+  done
+}
+
+load_saved_domain_hint() {
+  if [[ -f "$CONFIG_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$CONFIG_FILE"
+    DOMAIN_HINT="${DOMAIN:-$DOMAIN_HINT}"
+  fi
+}
+
+confirm_teardown() {
+  if [[ "$ASSUME_YES" == "1" ]]; then
+    return
+  fi
+
+  cat <<EOF
+This will remove the local Axichat self-host install for ${DOMAIN_HINT}:
+  - ejabberd, Stalwart, email-glue, and fpush services
+  - local app data, secrets, wrapper config/state, and app-specific firewall rules
+  - the ejabberd package itself$([[ "$PURGE_EJABBERD_PACKAGE" == "1" ]] && printf '' || printf ' (kept installed)')
+
+This does NOT:
+  - destroy the VPS
+  - undo f5m.sh / l5m.sh host hardening
+  - delete DNS/PTR records for you
+EOF
+
+  local answer
+  read -r -p "Continue with teardown? [y/N]: " answer || true
+  answer="$(printf '%s' "${answer:-}" | tr '[:upper:]' '[:lower:]')"
+  [[ "$answer" == "y" || "$answer" == "yes" ]] || die "teardown cancelled"
+}
+
+stop_disable_unit() {
+  local unit
+  for unit in "$@"; do
+    systemctl disable --now "$unit" >/dev/null 2>&1 || systemctl stop "$unit" >/dev/null 2>&1 || true
+    systemctl reset-failed "$unit" >/dev/null 2>&1 || true
+  done
+}
+
+remove_file_if_present() {
+  local path
+  for path in "$@"; do
+    [[ -e "$path" || -L "$path" ]] || continue
+    rm -f "$path"
+  done
+}
+
+remove_dir_if_present() {
+  local path
+  for path in "$@"; do
+    [[ -e "$path" ]] || continue
+    rm -rf "$path"
+  done
+}
+
+remove_app_ufw_rules() {
+  command -v ufw >/dev/null 2>&1 || return 0
+
+  local rules=(
+    "25/tcp"
+    "80/tcp"
+    "465/tcp"
+    "587/tcp"
+    "993/tcp"
+    "8443/tcp"
+    "5222/tcp"
+    "5223/tcp"
+    "5269/tcp"
+    "5280/tcp"
+    "5443/tcp"
+    "3478/udp"
+  )
+  local rule
+  for rule in "${rules[@]}"; do
+    ufw --force delete allow "$rule" >/dev/null 2>&1 || true
+  done
+}
+
+remove_ufw_redirect_block() {
+  local before_rules="/etc/ufw/before.rules"
+  [[ -f "$before_rules" ]] || return 0
+  command -v python3 >/dev/null 2>&1 || {
+    warn "python3 is not available, so the ejabberd port-80 redirect block was not removed from ${before_rules}"
+    return 0
+  }
+
+  python3 - <<'PY'
+from pathlib import Path
+
+path = Path("/etc/ufw/before.rules")
+text = path.read_text()
+
+block = """# ejabberd port 80 redirect
+*nat
+:PREROUTING ACCEPT [0:0]
+:OUTPUT ACCEPT [0:0]
+-A PREROUTING -p tcp --dport 80 -j REDIRECT --to-ports 5280
+-A OUTPUT -p tcp -o lo --dport 80 -j REDIRECT --to-ports 5280
+COMMIT
+"""
+
+if block not in text:
+    raise SystemExit(0)
+
+updated = text.replace("\n" + block + "\n", "\n")
+updated = updated.replace(block + "\n", "")
+updated = updated.replace("\n" + block, "\n")
+updated = updated.replace(block, "")
+path.write_text(updated)
+PY
+}
+
+reload_ufw() {
+  command -v ufw >/dev/null 2>&1 || return 0
+  ufw reload >/dev/null 2>&1 || true
+}
+
+teardown_services() {
+  info "Stopping and disabling Axichat self-host services"
+  stop_disable_unit \
+    update-stalwart-cert.timer \
+    update-stalwart-cert.service \
+    email-glue.service \
+    stalwart.service \
+    fpush.service \
+    ejabberd
+
+  if command -v docker >/dev/null 2>&1; then
+    docker rm -f stalwart >/dev/null 2>&1 || true
+  fi
+}
+
+teardown_systemd_units() {
+  info "Removing app-specific systemd units and helper binaries"
+  remove_file_if_present \
+    /etc/systemd/system/stalwart.service \
+    /etc/systemd/system/email-glue.service \
+    /etc/systemd/system/update-stalwart-cert.service \
+    /etc/systemd/system/update-stalwart-cert.timer \
+    /etc/systemd/system/fpush.service \
+    /usr/local/bin/email-glue \
+    /usr/local/bin/sync-ejabberd-cert.sh \
+    /usr/local/bin/update-stalwart-cert.sh \
+    /usr/local/bin/ejabberdctl \
+    /etc/default/stalwart-domain \
+    /etc/sysconfig/email-glue \
+    /etc/profile.d/ejabberd.sh
+
+  systemctl daemon-reload >/dev/null 2>&1 || true
+}
+
+teardown_data() {
+  info "Removing local Axichat self-host data and secrets"
+  remove_dir_if_present \
+    /var/lib/stalwart \
+    /var/lib/email-glue \
+    /root/stalwart-secrets \
+    /opt/fpush \
+    /var/lib/fpush \
+    /var/lib/ejabberd \
+    /var/www/upload \
+    /opt/ejabberd \
+    "$STATE_DIR"
+
+  remove_file_if_present "$CONFIG_FILE" "$STATE_FILE" "$STATE_JSON"
+
+  if id -u emailglue >/dev/null 2>&1; then
+    userdel -r emailglue >/dev/null 2>&1 || userdel emailglue >/dev/null 2>&1 || true
+  fi
+  if id -u fpush >/dev/null 2>&1; then
+    userdel -r fpush >/dev/null 2>&1 || userdel fpush >/dev/null 2>&1 || true
+  fi
+}
+
+teardown_ejabberd_package() {
+  if [[ "$PURGE_EJABBERD_PACKAGE" != "1" ]]; then
+    info "Keeping the ejabberd package installed"
+    return
+  fi
+
+  info "Purging the ejabberd package and apt source entries"
+  apt-mark unhold ejabberd >/dev/null 2>&1 || true
+  apt-get purge -y ejabberd >/dev/null 2>&1 || true
+  apt-get autoremove -y >/dev/null 2>&1 || true
+  remove_file_if_present \
+    /etc/apt/sources.list.d/ejabberd.list \
+    /etc/apt/trusted.gpg.d/ejabberd.gpg
+  remove_dir_if_present /opt/ejabberd-*
+}
+
+teardown_firewall() {
+  info "Removing app-specific firewall rules"
+  remove_app_ufw_rules
+  remove_ufw_redirect_block
+  reload_ufw
+}
+
+print_offserver_checklist() {
+  cat <<EOF
+
+Off-server teardown for ${DOMAIN_HINT}:
+1. Delete the Stalwart mail records you added in your DNS provider:
+   - MX
+   - SPF TXT
+   - DMARC TXT at _dmarc.${DOMAIN_HINT}
+   - DKIM TXT/CNAME records shown by Stalwart Webadmin
+2. Delete any A / AAAA records or XMPP-related records you pointed at this demo server.
+3. Remove the PTR / reverse-DNS record in your hosting provider panel.
+4. If this is a throwaway demo VPS, the cleanest reset is still deleting the server or reverting a snapshot.
+
+Local teardown is mostly scriptable and should be easy.
+Off-server teardown is still manual, but usually only a few DNS/PTR deletions.
+EOF
+}
+
+main() {
+  parse_args "$@"
+  need_root
+  acquire_install_lock
+  load_saved_domain_hint
+  confirm_teardown
+
+  teardown_services
+  teardown_systemd_units
+  teardown_data
+  teardown_ejabberd_package
+  teardown_firewall
+
+  info "Local teardown is complete"
+  print_offserver_checklist
+}
+
+main "$@"

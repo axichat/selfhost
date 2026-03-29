@@ -56,6 +56,52 @@ detect_ssh_port() {
   printf '%s\n' "${ssh_port:-22}"
 }
 
+load_existing_fpush_settings() {
+  python3 - <<'PY'
+import json
+import os
+import shlex
+import sys
+
+path = "/opt/fpush/settings.json"
+if not os.path.exists(path):
+    raise SystemExit(1)
+
+with open(path, "r", encoding="utf-8") as handle:
+    data = json.load(handle)
+
+component = data.get("component") or {}
+push_modules = data.get("pushModules") or {}
+
+module_name = ""
+module = {}
+for name, candidate in push_modules.items():
+    if not isinstance(candidate, dict):
+        continue
+    if candidate.get("type") == "apple" or "apns" in candidate:
+        module_name = name
+        module = candidate
+        break
+
+apns = module.get("apns") or {}
+values = {
+    "FPUSH_SECRET": component.get("componentKey", ""),
+    "APNS_NAME": module_name,
+    "APNS_P12_DST": apns.get("certFilePath", ""),
+    "APNS_P12_PASS": apns.get("certPassword", ""),
+    "APNS_TOPIC": apns.get("topic", ""),
+    "APNS_ENV": apns.get("environment", "production"),
+}
+
+required = ("FPUSH_SECRET", "APNS_NAME", "APNS_P12_DST", "APNS_TOPIC")
+if any(not values[key] for key in required):
+    raise SystemExit(1)
+
+for key, value in values.items():
+    print(f"{key}={shlex.quote(str(value))}")
+PY
+}
+
 has_domain_certificate() {
   "$EJABBERDCTL" list-certificates 2>/dev/null | awk -v d="${DOMAIN}" '$1==d{found=1} END{exit(found?0:1)}'
 }
@@ -169,6 +215,14 @@ fi
 echo
 echo "== Secrets (will NOT be echoed) =="
 
+FPUSH_REUSED_SETTINGS="0"
+FPUSH_SECRET=""
+APNS_NAME=""
+APNS_P12_DST=""
+APNS_P12_PASS=""
+APNS_TOPIC=""
+APNS_ENV=""
+
 if [[ -n "${ENABLE_FPUSH:-}" ]]; then
   ENABLE_FPUSH="$(echo "${ENABLE_FPUSH:-}" | tr '[:upper:]' '[:lower:]')"
   echo "Enable fpush (XEP-0357) component? ${ENABLE_FPUSH} (preconfigured)"
@@ -178,12 +232,21 @@ else
 fi
 
 if [[ "$ENABLE_FPUSH" == "y" || "$ENABLE_FPUSH" == "yes" ]]; then
-  while true; do
-    read -r -s -p "Set fpush component secret for push.${DOMAIN}: " FPUSH_SECRET; echo
-    [[ -n "$FPUSH_SECRET" ]] || { echo "Secret cannot be empty. Try again."; continue; }
-    [[ "$FPUSH_SECRET" != *$'\n'* ]] || { echo "Secret must be single-line."; continue; }
-    break
-  done
+  existing_fpush_settings="$(load_existing_fpush_settings 2>/dev/null || true)"
+  if [[ -n "$existing_fpush_settings" ]]; then
+    eval "$existing_fpush_settings"
+  fi
+  if [[ -n "$FPUSH_SECRET" && -n "$APNS_P12_DST" && -n "$APNS_TOPIC" && -f "$APNS_P12_DST" ]]; then
+    FPUSH_REUSED_SETTINGS="1"
+    echo "Reusing existing fpush component secret and APNS settings from /opt/fpush/settings.json"
+  else
+    while true; do
+      read -r -s -p "Set fpush component secret for push.${DOMAIN}: " FPUSH_SECRET; echo
+      [[ -n "$FPUSH_SECRET" ]] || { echo "Secret cannot be empty. Try again."; continue; }
+      [[ "$FPUSH_SECRET" != *$'\n'* ]] || { echo "Secret must be single-line."; continue; }
+      break
+    done
+  fi
 fi
 
 if [[ -n "${TURN_IPV4:-}" ]]; then
@@ -345,7 +408,7 @@ else
   "$EJABBERDCTL" register "$ADMIN_USER" "$DOMAIN" "$ADMIN_PASS_1"
 fi
 
-unset ADMIN_PASS_1 ADMIN_PASS_2 FPUSH_SECRET
+unset ADMIN_PASS_1 ADMIN_PASS_2
 
 echo
 if has_domain_certificate; then
@@ -384,37 +447,41 @@ chown -R fpush:fpush /opt/fpush
 chmod 750 /opt/fpush /opt/fpush/creds
 
 echo
-read -r -p "Enable Apple APNS push module? [y/N]: " ENABLE_APNS || true
-ENABLE_APNS="$(echo "${ENABLE_APNS:-}" | tr '[:upper:]' '[:lower:]')"
+if [[ "$FPUSH_REUSED_SETTINGS" == "1" ]]; then
+  ENABLE_APNS="yes"
+  echo "Enable Apple APNS push module? yes (reusing existing settings)"
+else
+  read -r -p "Enable Apple APNS push module? [y/N]: " ENABLE_APNS || true
+  ENABLE_APNS="$(echo "${ENABLE_APNS:-}" | tr '[:upper:]' '[:lower:]')"
+fi
 
 if [[ "$ENABLE_APNS" != "y" && "$ENABLE_APNS" != "yes" ]]; then
   die "APNS is required for fpush in this setup. Re-run and enable APNS."
 fi
 
-APNS_NAME=""
-APNS_P12_DST=""
-APNS_P12_PASS=""
-APNS_TOPIC=""
-APNS_ENV=""
 PUSH_MODULES_LINES=()
 
-read -r -p "APNS module name (pushModule value) [apns]: " APNS_NAME || true
-APNS_NAME="${APNS_NAME:-apns}"
+if [[ "$FPUSH_REUSED_SETTINGS" == "1" ]]; then
+  echo "Reusing existing Apple APNS push module settings from /opt/fpush/settings.json"
+else
+  read -r -p "APNS module name (pushModule value) [apns]: " APNS_NAME || true
+  APNS_NAME="${APNS_NAME:-apns}"
 
-read -r -p "Path to APNS .p12 certificate file: " APNS_P12_PATH
-[[ -f "$APNS_P12_PATH" ]] || die "APNS p12 file not found: $APNS_P12_PATH"
+  read -r -p "Path to APNS .p12 certificate file: " APNS_P12_PATH
+  [[ -f "$APNS_P12_PATH" ]] || die "APNS p12 file not found: $APNS_P12_PATH"
 
-read -r -s -p "APNS p12 password (can be empty if none): " APNS_P12_PASS; echo
-[[ "$APNS_P12_PASS" != *$'\n'* ]] || die "APNS password must be single-line."
+  read -r -s -p "APNS p12 password (can be empty if none): " APNS_P12_PASS; echo
+  [[ "$APNS_P12_PASS" != *$'\n'* ]] || die "APNS password must be single-line."
 
-read -r -p "APNS topic (bundle id, e.g. com.example.app): " APNS_TOPIC
-[[ -n "$APNS_TOPIC" ]] || die "APNS topic cannot be empty."
+  read -r -p "APNS topic (bundle id, e.g. com.example.app): " APNS_TOPIC
+  [[ -n "$APNS_TOPIC" ]] || die "APNS topic cannot be empty."
 
-read -r -p "APNS environment [production/sandbox] (default production): " APNS_ENV || true
-APNS_ENV="${APNS_ENV:-production}"
+  read -r -p "APNS environment [production/sandbox] (default production): " APNS_ENV || true
+  APNS_ENV="${APNS_ENV:-production}"
 
-APNS_P12_DST="/opt/fpush/creds/apns_${APNS_NAME}.p12"
-install -o fpush -g fpush -m 600 "$APNS_P12_PATH" "$APNS_P12_DST"
+  APNS_P12_DST="/opt/fpush/creds/apns_${APNS_NAME}.p12"
+  install -o fpush -g fpush -m 600 "$APNS_P12_PATH" "$APNS_P12_DST"
+fi
 
 PUSH_MODULES_LINES+=("    \"$(json_escape "$APNS_NAME")\": {")
 PUSH_MODULES_LINES+=("      \"type\": \"apple\",")
