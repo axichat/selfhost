@@ -1,6 +1,17 @@
-# ejabberd install (manual steps)
+# ejabberd install (advanced / manual)
 
-This folder has the `ejabberd` installer and the `ejabberd.yml` it writes. If the script fits your setup, use it. If you want to do it by hand, the outline below is the rough path.
+This is not the normal beginner install path.
+
+Normal self-host usage goes through the root [`../install.sh`](../install.sh):
+
+```bash
+sudo ../install.sh install --domain example.com --public-token YOUR_TOKEN
+sudo ../install.sh install --domain example.com --no-email
+```
+
+If you are following the normal self-host flow, stop here and go back to [`../README.md`](../README.md).
+
+This README is only for direct/manual ejabberd work. This folder has the component installer and the `ejabberd.yml` it writes.
 
 ## Prereqs
 
@@ -14,6 +25,8 @@ This folder has the `ejabberd` installer and the `ejabberd.yml` it writes. If th
 
 - Required env: `DOMAIN=example.com`
 - Optional env: `EJABBERD_VERSION_PREFIX=26.` to pin the apt version prefix
+- Optional env: `ENABLE_FPUSH=yes|no` to pre-answer the fpush prompt
+- Optional env: `TURN_IPV4=1.2.3.4` to pre-answer the TURN IP prompt
 - Interactive prompts:
 - `Enable fpush (XEP-0357) component? [y/N]`
 - fpush component secret if you enable fpush
@@ -22,7 +35,9 @@ This folder has the `ejabberd` installer and the `ejabberd.yml` it writes. If th
 
 ## Manual install outline
 
-Run `./f5m.sh` first only if you actually want it. Otherwise just do the steps below.
+This manual path assumes you are intentionally bypassing the wrapper and taking responsibility for the ejabberd-specific steps yourself.
+
+Run `../f5m.sh` first only if you actually want it. Otherwise just do the steps below.
 
 1) Install packages and repo key.
 
@@ -130,6 +145,8 @@ If you enable it, the installer builds fpush from source and asks for:
 - APNS environment (production/sandbox)
 
 If you do this manually, follow the same steps as in `ejabberd/install.sh` under “Installing fpush”.
+
+This is intentionally not part of the normal beginner path because it requires APNS credentials and extra Rust/fpush setup.
 
 ## Ports to allow (in your provider firewall)
 

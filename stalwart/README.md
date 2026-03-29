@@ -1,6 +1,18 @@
-# Stalwart install
+# Stalwart install (advanced / manual)
 
-This folder installs Stalwart and `email-glue`. The main entry point is `install.sh`, and it expects `DOMAIN` to be set.
+This is not the normal beginner install path.
+
+Normal self-host usage goes through the root [`../install.sh`](../install.sh):
+
+```bash
+sudo ../install.sh install --domain example.com --public-token YOUR_TOKEN
+```
+
+If you are following the normal self-host flow, stop here and go back to [`../README.md`](../README.md).
+
+In that normal root-wrapper flow, the installer waits in the same terminal for the Webadmin, DNS, and PTR steps. If it gets interrupted, rerun the same root `install` command.
+
+This README covers direct use of [`./install.sh`](install.sh) and the email-specific details behind that wrapper. The component script still expects `DOMAIN` to be set.
 
 ## Prereqs
 
@@ -14,31 +26,39 @@ export DOMAIN=example.com
 
 - ejabberd already installed on the same host with a valid cert for `DOMAIN` because Stalwart reuses that cert.
 - `openssl` available (installer uses it for password hashing and token generation).
+- For common server architectures (`amd64` and `arm64`), this repo now ships bundled Linux `email-glue` binaries.
+- On other architectures, the script falls back to installing `golang-go` and building `email-glue` on the target host.
 
-## Quick command
+## Direct component command
 
 ```bash
-./install.sh --public-token
+./install.sh --public-token=CLIENT_TOKEN
 ```
 
 Default behavior:
 
-- reuses or generates a public client token for `email-glue`
+- if you supply `--public-token=CLIENT_TOKEN`, that exact token is persisted for `email-glue`
+- if you only pass bare `--public-token`, the component script reuses or generates a client token
 - reuses `/root/stalwart-secrets/glue_api_token.txt` when valid
 - otherwise pauses and tells you how to create the Stalwart Admin API key that `email-glue` uses
+
+This manual/component script does not enforce the same UX as the root wrapper:
+
+- the root `../install.sh` requires you to choose `--public-token` explicitly unless you use `--no-email`
+- the component `./install.sh` can still reuse or auto-generate the client token if you use bare `--public-token` or omit it
 
 Recommended invocations:
 
 - Recommended default:
 
 ```bash
-./install.sh --public-token
+./install.sh --public-token=CLIENT_TOKEN
 ```
 
 - If you already created the Stalwart Admin API key for `email-glue`:
 
 ```bash
-./install.sh --public-token --glue-api-token=TOKEN
+./install.sh --public-token=CLIENT_TOKEN --glue-api-token=TOKEN
 ```
 
 - If you want to set both tokens explicitly:
@@ -50,13 +70,14 @@ Recommended invocations:
 ## Flags
 
 ```bash
-./install.sh [--public-token[=TOKEN]] [--no-public-token] [--glue-api-token=TOKEN]
+./install.sh [--public-token[=TOKEN]] [--no-public-token] [--glue-api-token=TOKEN] [--checkpoint-mode]
 ```
 
 - `--public-token`
 - Requires `X-Client-Token` / `X-Auth-Token` for `email-glue`.
 - This is the default if you omit the flag.
 - Reuses `/root/stalwart-secrets/client_token.txt` if present, otherwise generates one.
+- This is mainly for direct/manual component use; the root `../install.sh` flow expects you to choose the token explicitly.
 
 - `--public-token=TOKEN`
 - Same as `--public-token`, but persists the exact token value you provide to `/root/stalwart-secrets/client_token.txt`.
@@ -69,6 +90,10 @@ Recommended invocations:
 - Uses and persists this Stalwart Admin API key for `email-glue`.
 - Without this flag, installer reuses `/root/stalwart-secrets/glue_api_token.txt` when valid.
 - If the file is missing or invalid, the installer pauses and tells you how to create a new one in Webadmin.
+
+- `--checkpoint-mode`
+- Internal wrapper-oriented mode.
+- Prints the manual Webadmin instructions and exits instead of waiting for input.
 
 ## Stalwart Webadmin token flow
 
@@ -139,6 +164,13 @@ Defaults used by the installer/runtime:
 - `EMAIL_GLUE_LISTEN=0.0.0.0:8443`
 - `EMAIL_GLUE_CERT_FILE=/var/lib/stalwart/certs/$DOMAIN.fullchain.pem`
 - `EMAIL_GLUE_KEY_FILE=/var/lib/stalwart/certs/$DOMAIN.privkey.pem`
+
+## Build and packaging note
+
+- This repo now ships bundled `email-glue` binaries for `linux/amd64` and `linux/arm64`.
+- `stalwart/install.sh` installs the bundled binary when one matches the server architecture.
+- On unsupported architectures, `stalwart/install.sh` falls back to installing `golang-go` and running `go build` on the target host.
+- If you are using the normal guided flow, the root wrapper still ends up using this same component behavior underneath.
 
 ## Re-run behavior
 

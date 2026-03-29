@@ -14,10 +14,16 @@ PUBLIC_TOKEN_OVERRIDE=""
 PUBLIC_TOKEN_OVERRIDE_SET="0"
 GLUE_API_TOKEN_OVERRIDE=""
 GLUE_API_TOKEN_OVERRIDE_SET="0"
+CHECKPOINT_MODE="0"
+: "${SKIP_FIREWALL:=0}"
+: "${SKIP_DNS_GUIDANCE:=0}"
+
+CHECKPOINT_WEBADMIN_DOMAIN_RC=40
+CHECKPOINT_GLUE_API_TOKEN_RC=41
 
 usage() {
   cat <<'EOF'
-Usage: install.sh [--public-token[=TOKEN]] [--no-public-token] [--glue-api-token=TOKEN]
+Usage: install.sh [--public-token[=TOKEN]] [--no-public-token] [--glue-api-token=TOKEN] [--checkpoint-mode]
 
 Options:
   --public-token[=TOKEN]  Require X-Client-Token / X-Auth-Token for email-glue.
@@ -28,6 +34,7 @@ Options:
                           Not recommended on an internet-reachable host.
   --glue-api-token=TOKEN  Use this Stalwart API key for email-glue and persist it.
                           If omitted, reuse glue_api_token.txt when valid, else prompt.
+  --checkpoint-mode       Print manual instructions and exit instead of waiting for input.
   -h, --help              Show this help.
 EOF
 }
@@ -57,6 +64,10 @@ while [[ $# -gt 0 ]]; do
       if [[ -n "$GLUE_API_TOKEN_OVERRIDE" ]]; then
         GLUE_API_TOKEN_OVERRIDE_SET="1"
       fi
+      shift
+      ;;
+    --checkpoint-mode)
+      CHECKPOINT_MODE="1"
       shift
       ;;
     -h|--help)
@@ -90,6 +101,14 @@ bold() { printf "\033[1m%s\033[0m\n" "$*"; }
 info() { printf "• %s\n" "$*"; }
 warn() { printf "\033[33m%s\033[0m\n" "$*"; }
 
+detect_ssh_port() {
+  local ssh_port=""
+  if command -v sshd >/dev/null 2>&1; then
+    ssh_port="$(sshd -T 2>/dev/null | awk '/^port /{print $2; exit}')"
+  fi
+  printf '%s\n' "${ssh_port:-22}"
+}
+
 
 if [[ "${EUID}" -ne 0 ]]; then
   echo "ERROR: run as root" >&2
@@ -108,30 +127,35 @@ if [[ -x /usr/local/bin/erl ]]; then
 fi
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y docker.io golang-go curl jq openssl ca-certificates ufw
+apt-get install -y docker.io curl jq openssl ca-certificates ufw
 
 systemctl enable --now docker
 
-if [[ -f /etc/default/ufw ]]; then
-  sed -i 's/^IPV6=.*/IPV6=yes/' /etc/default/ufw || true
+if [[ "$SKIP_FIREWALL" == "1" ]]; then
+  info "Skipping UFW rule changes because the root wrapper already manages them"
+else
+  if [[ -f /etc/default/ufw ]]; then
+    sed -i 's/^IPV6=.*/IPV6=yes/' /etc/default/ufw || true
+  fi
+  ufw_active="yes"
+  if ufw status 2>/dev/null | head -n1 | grep -qi "inactive"; then
+    ufw_active="no"
+  fi
+  if [[ "$ufw_active" == "no" ]]; then
+    ufw default deny incoming || true
+    ufw default allow outgoing || true
+  fi
+  ufw allow "$(detect_ssh_port)/tcp" || true
+  ufw allow 25/tcp || true
+  ufw allow 465/tcp || true
+  ufw allow 587/tcp || true
+  ufw allow 993/tcp || true
+  ufw allow 8443/tcp || true
+  if [[ "$ufw_active" == "no" ]]; then
+    ufw --force enable || true
+  fi
+  ufw reload || true
 fi
-ufw_active="yes"
-if ufw status 2>/dev/null | head -n1 | grep -qi "inactive"; then
-  ufw_active="no"
-fi
-if [[ "$ufw_active" == "no" ]]; then
-  ufw default deny incoming || true
-  ufw default allow outgoing || true
-fi
-ufw allow 25/tcp || true
-ufw allow 465/tcp || true
-ufw allow 587/tcp || true
-ufw allow 993/tcp || true
-ufw allow 8443/tcp || true
-if [[ "$ufw_active" == "no" ]]; then
-  ufw --force enable || true
-fi
-ufw reload || true
 
 
 if ! id -u emailglue >/dev/null 2>&1; then
@@ -225,6 +249,10 @@ EOF
     warn "STALWART_SSH_HOST is not set. The tunnel command above will not work until you set it."
   fi
 
+  if [[ "$CHECKPOINT_MODE" == "1" ]]; then
+    exit "$CHECKPOINT_WEBADMIN_DOMAIN_RC"
+  fi
+
   while true; do
     read -r -p "Press Enter after creating domain ${DOMAIN} in Webadmin..." _
     if domain_exists; then
@@ -279,6 +307,10 @@ EOF
 
   if [[ -z "${STALWART_SSH_HOST}" ]]; then
     warn "STALWART_SSH_HOST is not set. The tunnel command above will not work until you set it."
+  fi
+
+  if [[ "$CHECKPOINT_MODE" == "1" ]]; then
+    exit "$CHECKPOINT_GLUE_API_TOKEN_RC"
   fi
 
   while true; do
@@ -349,16 +381,55 @@ EOF
 fi
 chmod 0600 /etc/sysconfig/email-glue
 
-cd "$(dirname "$0")/email-glue"
-go build -o /usr/local/bin/email-glue ./...
+EMAIL_GLUE_PREBUILT_DIR="$(dirname "$0")/email-glue/prebuilt"
+EMAIL_GLUE_TARGET="/usr/local/bin/email-glue"
+
+detect_email_glue_arch() {
+  if command -v dpkg >/dev/null 2>&1; then
+    case "$(dpkg --print-architecture)" in
+      amd64) printf 'amd64\n' ;;
+      arm64) printf 'arm64\n' ;;
+      *) printf 'unsupported\n' ;;
+    esac
+    return
+  fi
+
+  case "$(uname -m)" in
+    x86_64) printf 'amd64\n' ;;
+    aarch64|arm64) printf 'arm64\n' ;;
+    *) printf 'unsupported\n' ;;
+  esac
+}
+
+install_email_glue_binary() {
+  local arch source
+  arch="$(detect_email_glue_arch)"
+  source="${EMAIL_GLUE_PREBUILT_DIR}/email-glue-linux-${arch}"
+
+  if [[ "$arch" != "unsupported" && -x "$source" ]]; then
+    info "Installing bundled email-glue binary for linux/${arch}"
+    install -m 0755 "$source" "$EMAIL_GLUE_TARGET"
+    return
+  fi
+
+  warn "No bundled email-glue binary is available for this architecture. Falling back to a local Go build."
+  apt-get install -y golang-go
+  (
+    cd "$(dirname "$0")/email-glue"
+    go build -o "$EMAIL_GLUE_TARGET" ./...
+  )
+}
+
+install_email_glue_binary
 
 systemctl enable --now email-glue.service
 systemctl restart email-glue.service >/dev/null 2>&1 || true
 systemctl enable --now update-stalwart-cert.timer
 
 
-bold "MANUAL STEP: Configure DNS (DKIM / DMARC / SPF / MX) in your registrar"
-cat <<EOF
+if [[ "$SKIP_DNS_GUIDANCE" != "1" ]]; then
+  bold "MANUAL STEP: Configure DNS (DKIM / DMARC / SPF / MX) in your registrar"
+  cat <<EOF
 
 This installer no longer fetches DNS records programmatically.
 Copy the generated DNS records from Webadmin and paste them into your DNS provider/registrar.
@@ -387,6 +458,7 @@ Notes:
 • SPF must be a single TXT record per hostname.
 
 EOF
+fi
 
 echo "OK"
 echo "fallback_admin_password=$FALLBACK_PASSWORD"

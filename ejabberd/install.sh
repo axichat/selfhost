@@ -5,6 +5,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 : "${DOMAIN:?Set DOMAIN=example.com before running}"
 ADMIN_USER="admin"
 : "${EJABBERD_VERSION_PREFIX:=26.}"
+: "${SKIP_FIREWALL:=0}"
+: "${SKIP_UFW_REDIRECT:=0}"
 FPUSH_COMMIT="42359ca"
 
 CFG_SRC="${SCRIPT_DIR}/ejabberd.yml"
@@ -44,6 +46,14 @@ as_user() {
   local u="$1"
   shift
   runuser -u "$u" -- bash -lc "$*"
+}
+
+detect_ssh_port() {
+  local ssh_port=""
+  if command -v sshd >/dev/null 2>&1; then
+    ssh_port="$(sshd -T 2>/dev/null | awk '/^port /{print $2; exit}')"
+  fi
+  printf '%s\n' "${ssh_port:-22}"
 }
 
 has_domain_certificate() {
@@ -159,8 +169,13 @@ fi
 echo
 echo "== Secrets (will NOT be echoed) =="
 
-read -r -p "Enable fpush (XEP-0357) component? [y/N]: " ENABLE_FPUSH || true
-ENABLE_FPUSH="$(echo "${ENABLE_FPUSH:-}" | tr '[:upper:]' '[:lower:]')"
+if [[ -n "${ENABLE_FPUSH:-}" ]]; then
+  ENABLE_FPUSH="$(echo "${ENABLE_FPUSH:-}" | tr '[:upper:]' '[:lower:]')"
+  echo "Enable fpush (XEP-0357) component? ${ENABLE_FPUSH} (preconfigured)"
+else
+  read -r -p "Enable fpush (XEP-0357) component? [y/N]: " ENABLE_FPUSH || true
+  ENABLE_FPUSH="$(echo "${ENABLE_FPUSH:-}" | tr '[:upper:]' '[:lower:]')"
+fi
 
 if [[ "$ENABLE_FPUSH" == "y" || "$ENABLE_FPUSH" == "yes" ]]; then
   while true; do
@@ -171,7 +186,11 @@ if [[ "$ENABLE_FPUSH" == "y" || "$ENABLE_FPUSH" == "yes" ]]; then
   done
 fi
 
-TURN_IPV4="$(curl -4 -fsS https://api.ipify.org || true)"
+if [[ -n "${TURN_IPV4:-}" ]]; then
+  echo "TURN public IPv4: ${TURN_IPV4} (preconfigured)"
+else
+  TURN_IPV4="$(curl -4 -fsS https://api.ipify.org || true)"
+fi
 if [[ -z "$TURN_IPV4" ]]; then
   read -r -p "Public IPv4 for TURN (optional; leave blank to disable TURN): " TURN_IPV4
 fi
@@ -260,13 +279,18 @@ rm -f "$TMP_CFG"
 systemctl enable ejabberd >/dev/null 2>&1 || true
 
 echo
-echo "== Port 80 -> 5280 forwarding (ACME HTTP-01) =="
-if ss -ltn '( sport = :80 )' | grep -q LISTEN; then
-  die "Port 80 is already in use. Stop the service using port 80, then re-run."
-fi
+if [[ "$SKIP_UFW_REDIRECT" == "1" ]]; then
+  echo "== Port 80 -> 5280 forwarding (ACME HTTP-01) =="
+  echo "Skipping UFW redirect because the root wrapper already manages it."
+else
+  echo "== Port 80 -> 5280 forwarding (ACME HTTP-01) =="
+  if ss -ltn '( sport = :80 )' | grep -q LISTEN; then
+    die "Port 80 is already in use. Stop the service using port 80, then re-run."
+  fi
 
-ensure_ufw_redirect
-ufw reload >/dev/null 2>&1 || true
+  ensure_ufw_redirect
+  ufw reload >/dev/null 2>&1 || true
+fi
 
 echo
 echo "== Starting ejabberd =="
@@ -275,7 +299,9 @@ systemctl --no-pager --full status ejabberd | sed -n '1,25p' || true
 
 echo
 echo "== Firewall (best-effort) =="
-if command -v ufw >/dev/null 2>&1; then
+if [[ "$SKIP_FIREWALL" == "1" ]]; then
+  echo "Skipping UFW rule changes because the root wrapper already manages them."
+elif command -v ufw >/dev/null 2>&1; then
   ufw_active="yes"
   if ufw status 2>/dev/null | head -n1 | grep -qi "inactive"; then
     ufw_active="no"
@@ -287,6 +313,7 @@ if command -v ufw >/dev/null 2>&1; then
     ufw default deny incoming >/dev/null 2>&1 || true
     ufw default allow outgoing >/dev/null 2>&1 || true
   fi
+  ufw allow "$(detect_ssh_port)/tcp" >/dev/null 2>&1 || true
   ufw allow 5222/tcp >/dev/null 2>&1 || true
   ufw allow 5223/tcp >/dev/null 2>&1 || true
   ufw allow 5269/tcp >/dev/null 2>&1 || true

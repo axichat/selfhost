@@ -1,19 +1,17 @@
-![Axichat banner](https://raw.githubusercontent.com/axichat/axichat/master/metadata/en-US/images/axichat_banner.png)
+![Axichat banner](assets/axichat_banner.png)
 
 * * *
 
 # Self-Host Quick Start
 
-This directory installs the Axichat stack:
+This directory installs the Axichat self-host stack on a Debian server you control.
 
-- `ejabberd` for XMPP/chat
-- `Stalwart` for mail
-- `email-glue` for the client-facing mail API
+- Default mode: `ejabberd` + `Stalwart` + `email-glue`
+- Opt-out mode: `ejabberd` only with `--no-email`
 
-Use this on a Debian server you control. The detailed docs live here:
-
-- [`ejabberd/README.md`](ejabberd/README.md)
-- [`stalwart/README.md`](stalwart/README.md)
+The public entrypoint is the root [`install.sh`](install.sh).
+If you are doing a normal self-host install, start here and stay here. You should not need prior ejabberd or Stalwart knowledge; the script pauses and tells you exactly what to do.
+[`ejabberd/README.md`](ejabberd/README.md) and [`stalwart/README.md`](stalwart/README.md) are advanced/manual documents for troubleshooting, recovery, or direct component work.
 
 ## Why Self-Host
 
@@ -28,103 +26,128 @@ Use this on a Debian server you control. The detailed docs live here:
 ## Before You Start
 
 - Debian host with `sudo` or root access
-- a domain that points to the server
-- control over your provider firewall/security group
+- a domain that already points to the server
+- control over your provider firewall / security group
 - no other service already using the required ports
 
-Ports you need available:
+Ports you always need available:
 
 - `80/tcp`
 - `5222/tcp`, `5223/tcp`, `5269/tcp`, `5443/tcp`
-- `25/tcp`, `465/tcp`, `587/tcp`, `993/tcp`
 - `3478/udp`
 
-Optional, only if you want `f5m.sh` / `l5m.sh` managing SSH:
+Extra ports if you are not using `--no-email`:
 
-- an SSH public key on your laptop, usually `~/.ssh/id_ed25519.pub`
+- `25/tcp`, `465/tcp`, `587/tcp`, `993/tcp`, `8443/tcp`
+
+If you enable email, there are real off-server tasks after the server install:
+
+- Stalwart Webadmin over an SSH tunnel
+- copying DNS records from Webadmin into your DNS provider
+- setting PTR / reverse DNS with your host or provider
+
+PTR / reverse DNS is usually set in your VPS or hosting provider panel, not in your normal DNS zone editor.
+
+For normal installs on common Linux servers (`amd64` and `arm64`), the repo now ships a bundled `email-glue` binary. You do not need Go installed on the server for those cases.
+
+The installer tracks progress in:
+
+- `/etc/axichat/selfhost.env`
+- `/var/lib/axichat-selfhost/state.json`
 
 ## Install
 
-1. Copy or clone this directory to the server, then enter the `selfhost` directory.
+1. Get this repo onto the server and enter the `selfhost` directory.
+
+On the server, run:
 
 ```bash
-cd selfhost
+curl -L https://gitlab.com/axichat/selfhost/-/archive/main/selfhost-main.tar.gz | tar -xzf -
+cd selfhost-main
 ```
 
-2. Optional: run `f5m.sh` on a fresh dedicated host.
-
-Skip this if the server already has other services or you already manage SSH/firewall yourself.
+If you already have the repo on your laptop and want to upload it manually instead:
 
 ```bash
-sudo SSH_USER=root SSH_PUBKEY_FILE=~/.ssh/id_ed25519.pub ./f5m.sh
+scp -r ./selfhost root@YOUR_SERVER_IP:~
+ssh root@YOUR_SERVER_IP
+cd ~/selfhost
 ```
 
-3. Export your domain.
+2. Choose one of these entrypoints.
+
+Full stack, recommended:
 
 ```bash
-export DOMAIN=example.com
+sudo ./install.sh install --domain example.com --public-token your-shared-token
 ```
 
-4. Install ejabberd.
+Choose that public token yourself. It is the client-facing token people will need for `email-glue`, so it should be something you can remember and distribute. It is not your admin password and it is not an SMTP password.
+
+XMPP only:
 
 ```bash
-cd ejabberd
-sudo -E ./install.sh
-cd ..
+sudo ./install.sh install --domain example.com --no-email
 ```
 
-For ejabberd-specific details, see [`ejabberd/README.md`](ejabberd/README.md).
-That README covers installer inputs/prompts, manual installation, and ejabberd-specific ports/notes.
-
-5. Install Stalwart and `email-glue`.
-
-Recommended:
+Fresh dedicated host, with the initial hardening wrapper:
 
 ```bash
-cd stalwart
-sudo -E ./install.sh --public-token
-cd ..
+sudo ./install.sh install \
+  --domain example.com \
+  --public-token your-shared-token \
+  --profile fresh-server \
+  --ssh-pubkey-file ~/.ssh/id_ed25519.pub
 ```
 
-If you already created the Stalwart Admin API key for `email-glue`:
+3. Follow the guided checkpoints.
+
+When the installer needs something off-server, it prints the exact steps and then waits for you in the same terminal. In the normal flow, you do not need to open the component readmes.
+If the script gets interrupted, rerun the same `install` command and it will continue from the saved phase.
+
+If you later pull a newer version of this repo and want to re-run the installed services with the same saved config, use:
 
 ```bash
-cd stalwart
-sudo -E ./install.sh --public-token --glue-api-token=TOKEN
-cd ..
+sudo ./install.sh upgrade
 ```
 
-The Stalwart installer may pause for Webadmin steps such as creating the domain or the glue API token.
-For Stalwart-specific details, see [`stalwart/README.md`](stalwart/README.md).
-That README covers the glue API token flow, the public client token, all flags, env overrides, rerun behavior, and verification.
+`upgrade` re-runs the saved app/service configuration. It does not restart the initial fresh-server bootstrap flow.
 
-6. Optional: lock SSH down after you confirm key login works.
+Typical email checkpoints:
 
-```bash
-sudo ./l5m.sh
-```
+- create the Stalwart domain in Webadmin
+- create the `email-glue` Stalwart API key
+- copy DNS records from Webadmin into your DNS provider
+- configure PTR / reverse DNS in your hosting provider panel
 
 ## Verify
 
 ```bash
-sudo systemctl status ejabberd --no-pager
-sudo systemctl status stalwart.service --no-pager
-sudo systemctl status email-glue.service --no-pager
-curl -fsS http://127.0.0.1:8080/healthz/ready
-curl -fsS -X POST http://127.0.0.1:5281/api/status -H 'Content-Type: application/json' -d '{}'
-curl -sk -H "X-Client-Token: $(sudo cat /root/stalwart-secrets/client_token.txt)" https://127.0.0.1:8443/health
+sudo ./install.sh verify
+sudo ./install.sh doctor
 ```
 
-If you ran `stalwart/install.sh --no-public-token`, omit the `X-Client-Token` header on the `8443` check.
+`verify` checks the local services and health endpoints. `doctor` adds higher-level checks and uses `dig` for DNS checks when it is available.
+For email installs, `verify` is the immediate local check and `doctor` is the better follow-up after DNS and PTR have propagated.
 
-## More Detail
+For the full flag list, run:
 
-- For ejabberd setup and manual steps: [`ejabberd/README.md`](ejabberd/README.md)
-- For Stalwart, `email-glue`, tokens, flags, and Webadmin steps: [`stalwart/README.md`](stalwart/README.md)
+```bash
+./install.sh help
+```
+
+If you rerun the same `install` command after an interruption, the wrapper continues from the saved phase instead of starting over.
+
+## Component Readmes
+
+- [`ejabberd/README.md`](ejabberd/README.md): advanced/manual ejabberd path, fpush notes, and ejabberd-specific prompts
+- [`stalwart/README.md`](stalwart/README.md): advanced/manual Stalwart path, Webadmin/API-key flow, direct script flags, and email-specific verification
+
+Most users should only need those readmes for troubleshooting, manual recovery, or direct component debugging.
 
 ## Defaults
 
 - mailbox quota is unlimited
 - ejabberd upload limits are large
 - message history is kept by default
-- `email-glue` requires a public client token by default
+- new email installs require a user-chosen public client token
