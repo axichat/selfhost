@@ -16,6 +16,8 @@ GLUE_API_TOKEN_OVERRIDE=""
 GLUE_API_TOKEN_OVERRIDE_SET="0"
 : "${SKIP_FIREWALL:=0}"
 : "${SKIP_DNS_GUIDANCE:=0}"
+LOG_DIR="/var/log/axichat-selfhost"
+INSTALL_LOG="${LOG_DIR}/stalwart-install.log"
 
 usage() {
   cat <<'EOF'
@@ -91,11 +93,51 @@ fi
 bold() { printf "\033[1m%s\033[0m\n" "$*"; }
 info() { printf "• %s\n" "$*"; }
 warn() { printf "\033[33m%s\033[0m\n" "$*"; }
+on_err() {
+  local rc=$?
+  echo >&2
+  echo "ERROR: install failed (exit $rc) at line ${BASH_LINENO[0]}: ${BASH_COMMAND}" >&2
+  echo "Debug tips:" >&2
+  echo "  - tail -n 200 ${INSTALL_LOG}" >&2
+  echo "  - systemctl status stalwart.service --no-pager" >&2
+  echo "  - journalctl -u stalwart.service -b --no-pager | tail -n 300" >&2
+  echo "  - systemctl status email-glue.service --no-pager" >&2
+  echo "  - journalctl -u email-glue.service -b --no-pager | tail -n 300" >&2
+  exit $rc
+}
+trap on_err ERR
+
+run_logged_step() {
+  local label="$1"
+  shift
+
+  info "$label"
+  if "$@" >>"$INSTALL_LOG" 2>&1; then
+    return 0
+  fi
+
+  local rc=$?
+  echo "ERROR: ${label} failed. Full log: ${INSTALL_LOG}" >&2
+  tail -n 80 "$INSTALL_LOG" >&2 || true
+  exit "$rc"
+}
+
+log_step_output() {
+  "$@" >>"$INSTALL_LOG" 2>&1 || true
+}
 
 if [[ "${EUID}" -ne 0 ]]; then
   echo "ERROR: run as root" >&2
   exit 1
 fi
+
+mkdir -p "$LOG_DIR"
+touch "$INSTALL_LOG"
+chmod 0600 "$INSTALL_LOG"
+{
+  echo
+  echo "==== $(date -u +"%Y-%m-%dT%H:%M:%SZ") stalwart install for ${DOMAIN} ===="
+} >>"$INSTALL_LOG"
 
 # Avoid stale /usr/local Erlang wrappers shadowing system binaries during apt/dpkg hooks.
 export PATH="/usr/sbin:/usr/bin:/sbin:/bin"
@@ -108,10 +150,10 @@ if [[ -x /usr/local/bin/erl ]]; then
   fi
 fi
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -y
-apt-get install -y docker.io curl jq openssl ca-certificates
+run_logged_step "Updating apt package lists" apt-get update -y
+run_logged_step "Installing Stalwart dependencies" apt-get install -y docker.io curl jq openssl ca-certificates
 
-systemctl enable --now docker
+run_logged_step "Starting Docker" systemctl enable --now docker
 
 if [[ "$SKIP_FIREWALL" == "1" ]]; then
   info "Skipping UFW rule changes because the root wrapper already manages them"
@@ -171,10 +213,11 @@ sed -e "s|__FALLBACK_HASH__|$escaped_fallback_hash|" \
 /bin/echo "DOMAIN=$DOMAIN" > /etc/default/stalwart-domain
 chmod 0644 /etc/default/stalwart-domain
 
-/usr/local/bin/sync-ejabberd-cert.sh
+run_logged_step "Syncing the ejabberd certificate into Stalwart" /usr/local/bin/sync-ejabberd-cert.sh
 
-systemctl daemon-reload
-systemctl enable --now stalwart.service
+run_logged_step "Reloading systemd units for Stalwart" systemctl daemon-reload
+run_logged_step "Starting Stalwart" systemctl enable --now stalwart.service
+log_step_output systemctl --no-pager --full status stalwart.service
 
 for i in $(seq 1 60); do
   if curl -fsS "$HTTP_READY" >/dev/null 2>&1; then
@@ -380,18 +423,19 @@ install_email_glue_binary() {
   fi
 
   warn "No bundled email-glue binary is available for this architecture. Falling back to a local Go build."
-  apt-get install -y golang-go
+  run_logged_step "Installing Go toolchain for local email-glue build" apt-get install -y golang-go
   (
     cd "$(dirname "$0")/email-glue"
-    go build -o "$EMAIL_GLUE_TARGET" ./...
+    run_logged_step "Building email-glue locally" go build -o "$EMAIL_GLUE_TARGET" ./...
   )
 }
 
 install_email_glue_binary
 
-systemctl enable --now email-glue.service
-systemctl restart email-glue.service >/dev/null 2>&1 || true
-systemctl enable --now update-stalwart-cert.timer
+run_logged_step "Starting email-glue" systemctl enable --now email-glue.service
+run_logged_step "Restarting email-glue" systemctl restart email-glue.service
+log_step_output systemctl --no-pager --full status email-glue.service
+run_logged_step "Starting the Stalwart certificate refresh timer" systemctl enable --now update-stalwart-cert.timer
 
 
 if [[ "$SKIP_DNS_GUIDANCE" != "1" ]]; then

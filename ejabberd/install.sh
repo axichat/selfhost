@@ -11,6 +11,8 @@ FPUSH_COMMIT="42359ca"
 CFG_SRC="${SCRIPT_DIR}/ejabberd.yml"
 ACME_REDIRECT_UNIT_SRC="${SCRIPT_DIR}/systemd/ejabberd-acme-redirect.service"
 ACME_REDIRECT_UNIT_DST="/etc/systemd/system/ejabberd-acme-redirect.service"
+LOG_DIR="/var/log/axichat-selfhost"
+INSTALL_LOG="${LOG_DIR}/ejabberd-install.log"
 
 die() {
   echo "ERROR: $*" >&2
@@ -22,6 +24,7 @@ on_err() {
   echo >&2
   echo "ERROR: install failed (exit $rc) at line ${BASH_LINENO[0]}: ${BASH_COMMAND}" >&2
   echo "Debug tips:" >&2
+  echo "  - tail -n 200 ${INSTALL_LOG}" >&2
   echo "  - systemctl status ejabberd --no-pager" >&2
   echo "  - journalctl -u ejabberd -b --no-pager | tail -n 300" >&2
   echo "  - tail -n 300 /opt/ejabberd/logs/ejabberd.log 2>/dev/null || true" >&2
@@ -104,8 +107,31 @@ install_acme_redirect_service() {
   command -v socat >/dev/null 2>&1 || die "socat is required for the ejabberd ACME port-80 forwarder"
 
   install -m 0644 "$ACME_REDIRECT_UNIT_SRC" "$ACME_REDIRECT_UNIT_DST"
-  systemctl daemon-reload
-  systemctl enable --now ejabberd-acme-redirect.service
+  run_logged_step "Reloading systemd units for the ACME port-80 forwarder" systemctl daemon-reload
+  run_logged_step "Starting the ACME port-80 forwarder" systemctl enable --now ejabberd-acme-redirect.service
+}
+
+run_logged_step() {
+  local label="$1"
+  shift
+
+  echo "• ${label}"
+  if "$@" >>"$INSTALL_LOG" 2>&1; then
+    return 0
+  fi
+
+  local rc=$?
+  echo "ERROR: ${label} failed. Full log: ${INSTALL_LOG}" >&2
+  tail -n 80 "$INSTALL_LOG" >&2 || true
+  exit "$rc"
+}
+
+log_step_output() {
+  "$@" >>"$INSTALL_LOG" 2>&1 || true
+}
+
+reset_ejabberd_apt_repo_files() {
+  rm -f /etc/apt/sources.list.d/ejabberd.list /etc/apt/trusted.gpg.d/ejabberd.gpg
 }
 
 [[ $EUID -eq 0 ]] || die "Run as root."
@@ -120,6 +146,13 @@ if [[ "${ID:-}" != "debian" ]]; then
 fi
 
 export DEBIAN_FRONTEND=noninteractive
+mkdir -p "$LOG_DIR"
+touch "$INSTALL_LOG"
+chmod 0600 "$INSTALL_LOG"
+{
+  echo
+  echo "==== $(date -u +"%Y-%m-%dT%H:%M:%SZ") ejabberd install for ${DOMAIN} ===="
+} >>"$INSTALL_LOG"
 # Avoid stale /usr/local Erlang wrappers shadowing system binaries during apt/dpkg hooks.
 export PATH="/usr/sbin:/usr/bin:/sbin:/bin"
 if [[ -x /usr/local/bin/erl ]]; then
@@ -131,19 +164,21 @@ if [[ -x /usr/local/bin/erl ]]; then
   fi
 fi
 
-apt-get update -y
+reset_ejabberd_apt_repo_files
+run_logged_step "Updating apt package lists" apt-get update -y
 
-apt-get install -y --no-install-recommends \
+run_logged_step "Installing ejabberd base dependencies" apt-get install -y --no-install-recommends \
   ca-certificates curl gnupg iproute2 python3
 
-apt-get install -y --no-install-recommends \
+run_logged_step "Installing ejabberd helper packages" apt-get install -y --no-install-recommends \
   socat \
   sqlite3 imagemagick fonts-dejavu-core gsfonts \
   git build-essential pkg-config libssl-dev
 
-curl -fsSL -o /etc/apt/sources.list.d/ejabberd.list https://repo.process-one.net/ejabberd.list
-curl -fsSL -o /etc/apt/trusted.gpg.d/ejabberd.gpg https://repo.process-one.net/ejabberd.gpg
-apt-get update -y
+run_logged_step "Fetching ejabberd apt repository list" curl -fsSL -o /etc/apt/sources.list.d/ejabberd.list https://repo.process-one.net/ejabberd.list
+run_logged_step "Fetching ejabberd apt signing key" curl -fsSL -o /etc/apt/trusted.gpg.d/ejabberd.gpg https://repo.process-one.net/ejabberd.gpg
+chmod 0644 /etc/apt/sources.list.d/ejabberd.list /etc/apt/trusted.gpg.d/ejabberd.gpg
+run_logged_step "Refreshing apt package lists for ejabberd packages" apt-get update -y
 
 avail_ver="$(apt-cache madison ejabberd | awk '{print $3}' | awk -v p="${EJABBERD_VERSION_PREFIX}" 'index($0,p)==1{print; exit}' || true)"
 if [[ -z "$avail_ver" ]]; then
@@ -152,7 +187,7 @@ if [[ -z "$avail_ver" ]]; then
   die "ejabberd ${EJABBERD_VERSION_PREFIX} not found in apt sources."
 fi
 
-apt-get install -y "ejabberd=${avail_ver}"
+run_logged_step "Installing ejabberd ${avail_ver}" apt-get install -y "ejabberd=${avail_ver}"
 EJABBERD_BASE_VER="${avail_ver%%-*}"
 EJABBERD_BASE_VER="${EJABBERD_BASE_VER%%+*}"
 apt-mark hold ejabberd >/dev/null 2>&1 || true
@@ -323,8 +358,8 @@ fi
 
 echo
 echo "== Starting ejabberd =="
-systemctl restart ejabberd
-systemctl --no-pager --full status ejabberd | sed -n '1,25p' || true
+run_logged_step "Restarting ejabberd" systemctl restart ejabberd
+log_step_output systemctl --no-pager --full status ejabberd
 
 echo
 echo "== Firewall (best-effort) =="
@@ -376,8 +411,9 @@ else
   echo "== Requesting TLS certificate (Let's Encrypt) =="
   echo "NOTE: ACME requires inbound HTTP on port 80 (the bundled port-80 forwarder sends it to ejabberd port 5280)."
   echo "If this fails, confirm ${DOMAIN} resolves to this server and that inbound TCP/80 is allowed."
-  "$EJABBERDCTL" request-certificate "$DOMAIN" || die "ACME certificate request failed."
-  systemctl restart ejabberd
+  run_logged_step "Requesting a Let's Encrypt certificate for ${DOMAIN}" "$EJABBERDCTL" request-certificate "$DOMAIN"
+  run_logged_step "Restarting ejabberd after certificate request" systemctl restart ejabberd
+  log_step_output systemctl --no-pager --full status ejabberd
 fi
 
 echo
@@ -457,16 +493,16 @@ echo
 echo "== Building fpush from source (Rust) =="
 
 if [[ ! -x /var/lib/fpush/.cargo/bin/cargo ]]; then
-  as_user fpush 'curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal'
+  run_logged_step "Installing Rust toolchain for fpush" as_user fpush 'curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal'
 fi
 
 if [[ ! -d /opt/fpush/src/.git ]]; then
-  as_user fpush 'cd /opt/fpush && git clone --depth 1 https://github.com/monal-im/fpush.git src'
+  run_logged_step "Cloning fpush source" as_user fpush 'cd /opt/fpush && git clone --depth 1 https://github.com/monal-im/fpush.git src'
 fi
 
-as_user fpush "cd /opt/fpush/src && git fetch --depth 1 origin ${FPUSH_COMMIT} && git checkout --detach ${FPUSH_COMMIT} && git reset --hard ${FPUSH_COMMIT}"
+run_logged_step "Checking out fpush commit ${FPUSH_COMMIT}" as_user fpush "cd /opt/fpush/src && git fetch --depth 1 origin ${FPUSH_COMMIT} && git checkout --detach ${FPUSH_COMMIT} && git reset --hard ${FPUSH_COMMIT}"
 
-as_user fpush 'cd /opt/fpush/src && /var/lib/fpush/.cargo/bin/cargo build --release'
+run_logged_step "Building fpush" as_user fpush 'cd /opt/fpush/src && /var/lib/fpush/.cargo/bin/cargo build --release'
 install -o root -g root -m 0755 /opt/fpush/src/target/release/fpush /opt/fpush/fpush
 
 echo
@@ -515,9 +551,9 @@ LimitNOFILE=131072
 WantedBy=multi-user.target
 EOF
 
-systemctl daemon-reload
-systemctl enable --now fpush
-systemctl --no-pager --full status fpush | sed -n '1,30p' || true
+run_logged_step "Reloading systemd units for fpush" systemctl daemon-reload
+run_logged_step "Starting fpush" systemctl enable --now fpush
+log_step_output systemctl --no-pager --full status fpush
 
 unset ADMIN_PASS_1 ADMIN_PASS_2 FPUSH_SECRET APNS_P12_PASS
 else

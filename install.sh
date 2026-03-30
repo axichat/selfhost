@@ -38,20 +38,21 @@ LOCK_FD=""
 info() { printf '• %s\n' "$*"; }
 warn() { printf 'WARN: %s\n' "$*" >&2; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+section() { printf '\n== %s ==\n' "$*"; }
 
 usage() {
   cat <<'EOF'
 Usage:
-  sudo ./install.sh install --domain example.com --public-token YOUR_TOKEN [options]
-  sudo ./install.sh install --domain example.com --no-email [options]
-  sudo ./install.sh upgrade
-  sudo ./install.sh doctor
-  sudo ./install.sh verify
-  sudo ./install.sh help
+  sudo bash ./install.sh install --domain example.com --public-token YOUR_TOKEN [options]
+  sudo bash ./install.sh install --domain example.com --no-email [options]
+  sudo bash ./install.sh upgrade
+  sudo bash ./install.sh doctor
+  sudo bash ./install.sh verify
+  sudo bash ./install.sh help
 
 Most people want one of these:
-  sudo ./install.sh install --domain example.com --public-token YOUR_TOKEN
-  sudo ./install.sh install --domain example.com --no-email
+  sudo bash ./install.sh install --domain example.com --public-token YOUR_TOKEN
+  sudo bash ./install.sh install --domain example.com --no-email
 
 If the installer pauses for a browser / DNS / hosting-provider step, keep it
 open and follow the instructions it prints. If it gets interrupted, rerun the
@@ -205,20 +206,22 @@ load_state() {
 }
 
 save_config() {
-  umask 077
   mkdir -p "$(dirname "$CONFIG_FILE")"
-  {
-    write_shell_var "DOMAIN" "$DOMAIN"
-    write_shell_var "NO_EMAIL" "$NO_EMAIL"
-    write_shell_var "PUBLIC_TOKEN" "$PUBLIC_TOKEN"
-    write_shell_var "GLUE_API_TOKEN" "$GLUE_API_TOKEN"
-    write_shell_var "ENABLE_FPUSH" "$ENABLE_FPUSH"
-    write_shell_var "TURN_PUBLIC_IP" "$TURN_PUBLIC_IP"
-    write_shell_var "STALWART_SSH_HOST" "$STALWART_SSH_HOST"
-    write_shell_var "STALWART_SSH_USER" "$STALWART_SSH_USER"
-    write_shell_var "TUNNEL_LOCAL_PORT" "$TUNNEL_LOCAL_PORT"
-    write_shell_var "WEBADMIN_REMOTE_PORT" "$WEBADMIN_REMOTE_PORT"
-  } >"$CONFIG_FILE"
+  (
+    umask 077
+    {
+      write_shell_var "DOMAIN" "$DOMAIN"
+      write_shell_var "NO_EMAIL" "$NO_EMAIL"
+      write_shell_var "PUBLIC_TOKEN" "$PUBLIC_TOKEN"
+      write_shell_var "GLUE_API_TOKEN" "$GLUE_API_TOKEN"
+      write_shell_var "ENABLE_FPUSH" "$ENABLE_FPUSH"
+      write_shell_var "TURN_PUBLIC_IP" "$TURN_PUBLIC_IP"
+      write_shell_var "STALWART_SSH_HOST" "$STALWART_SSH_HOST"
+      write_shell_var "STALWART_SSH_USER" "$STALWART_SSH_USER"
+      write_shell_var "TUNNEL_LOCAL_PORT" "$TUNNEL_LOCAL_PORT"
+      write_shell_var "WEBADMIN_REMOTE_PORT" "$WEBADMIN_REMOTE_PORT"
+    } >"$CONFIG_FILE"
+  )
   chmod 0600 "$CONFIG_FILE"
 }
 
@@ -237,8 +240,8 @@ require_saved_install() {
   die "no saved install was found.
 
 Start with one of:
-  sudo ./install.sh install --domain example.com --public-token YOUR_TOKEN
-  sudo ./install.sh install --domain example.com --no-email"
+  sudo bash ./install.sh install --domain example.com --public-token YOUR_TOKEN
+  sudo bash ./install.sh install --domain example.com --no-email"
 }
 
 validate_install_matches_saved_config() {
@@ -301,31 +304,13 @@ print_install_overview() {
 ${heading} summary:
   Domain:  ${DOMAIN}
   Mode:    $([[ "$NO_EMAIL" == "1" ]] && printf 'xmpp-only (--no-email)' || printf 'full stack (xmpp + email)')
-  Config:  ${CONFIG_FILE}
-  State:   ${STATE_JSON}
 EOF
 
   if [[ "$NO_EMAIL" == "0" ]]; then
     cat <<'EOF'
 The public token is not your admin password. It is the shared token people will later use when talking to email-glue.
-
-Later, the script will pause and tell you exactly when to:
-  - open Stalwart Webadmin through an SSH tunnel from your laptop
-  - copy DNS records from Webadmin into your DNS provider
-  - set PTR / reverse DNS in your hosting provider panel
-EOF
-  else
-    cat <<'EOF'
-Email is disabled, so the script will only install ejabberd and skip all Stalwart / email steps.
 EOF
   fi
-
-  cat <<'EOF'
-The installer does not do generic SSH hardening or baseline server-security setup.
-If UFW is already active, it will add only the app-specific UFW rules needed for this stack.
-If the script pauses, keep it open and do the off-server step it printed.
-If the script gets interrupted, rerun the same install command.
-EOF
 }
 
 apply_firewall_rules() {
@@ -440,7 +425,7 @@ validate_install_args() {
   [[ -n "$DOMAIN" ]] || die "--domain is required.
 
 Example:
-  sudo ./install.sh install --domain example.com --public-token your-shared-token"
+  sudo bash ./install.sh install --domain example.com --public-token your-shared-token"
   [[ "$NO_EMAIL" == "0" || "$NO_EMAIL" == "1" ]] || die "internal error: NO_EMAIL must be 0 or 1"
   [[ "$ENABLE_FPUSH" == "0" || "$ENABLE_FPUSH" == "1" ]] || die "internal error: ENABLE_FPUSH must be 0 or 1"
 
@@ -451,8 +436,8 @@ Example:
     [[ -n "$PUBLIC_TOKEN" ]] || die "--public-token is required unless you pass --no-email.
 
 Examples:
-  sudo ./install.sh install --domain ${DOMAIN:-example.com} --public-token your-shared-token
-  sudo ./install.sh install --domain ${DOMAIN:-example.com} --no-email"
+  sudo bash ./install.sh install --domain ${DOMAIN:-example.com} --public-token your-shared-token
+  sudo bash ./install.sh install --domain ${DOMAIN:-example.com} --no-email"
   fi
 
   [[ "$DOMAIN" != *$'\n'* ]] || die "--domain must be single-line"
@@ -589,6 +574,7 @@ run_preflight_phase() {
   need_root
   ensure_repo_layout
   require_debian
+  section "Preflight"
   print_install_overview "Install"
   run_preflight_checks install
 
@@ -597,9 +583,9 @@ run_preflight_phase() {
     info "Email stack is disabled (--no-email)"
   else
     info "Email stack is enabled; your chosen public token was saved for later email-glue use"
-    info "The script will wait in place and tell you exactly when it needs browser, DNS, or PTR work"
   fi
-  info "Progress is saved automatically. If anything interrupts the install, rerun the same install command."
+  info "If this install needs browser, DNS, or PTR work, it will stop at that exact step and wait there"
+  info "If anything interrupts the install, rerun the same install command"
 
   append_completed_phase "preflight"
   CURRENT_PHASE="firewall_setup"
@@ -610,6 +596,7 @@ run_upgrade_preflight() {
   need_root
   ensure_repo_layout
   require_debian
+  section "Preflight"
   print_install_overview "Upgrade"
   run_preflight_checks upgrade
 
@@ -620,8 +607,8 @@ run_upgrade_preflight() {
 run_firewall_phase() {
   CURRENT_PHASE="firewall_setup"
   save_state
-  info "Configuring local firewall rules in the root wrapper"
-  info "This opens only the ports required for the selected install mode"
+  section "Firewall"
+  info "Checking whether UFW is already active for app-specific allow rules"
   apply_firewall_rules
   append_completed_phase "firewall_setup"
   CURRENT_PHASE="ejabberd_install"
@@ -631,6 +618,7 @@ run_firewall_phase() {
 run_ejabberd_phase() {
   CURRENT_PHASE="ejabberd_install"
   save_state
+  section "ejabberd"
   info "Installing ejabberd"
   info "ejabberd will ask you to choose the XMPP admin password"
   if [[ -n "$TURN_PUBLIC_IP" ]]; then
@@ -662,8 +650,9 @@ run_ejabberd_phase() {
 run_stalwart_phase() {
   CURRENT_PHASE="stalwart_install"
   save_state
+  section "Stalwart"
   info "Installing Stalwart and email-glue"
-  info "If Stalwart needs something from your browser, this install will wait for you and then continue"
+  info "If browser work is needed, the install will stop at that exact step and wait for you"
 
   local args=("--public-token=${PUBLIC_TOKEN}")
   if [[ -n "$GLUE_API_TOKEN" ]]; then
@@ -688,6 +677,7 @@ run_dns_checkpoint() {
   CURRENT_PHASE="checkpoint_dns_records"
   save_state
 
+  section "DNS"
   cat <<EOF
 
 DNS step:
@@ -716,6 +706,7 @@ run_reverse_dns_checkpoint() {
 
   local public_ip=""
   public_ip="$(detect_public_ipv4)"
+  section "Reverse DNS"
   cat <<EOF
 
 Reverse DNS step:
@@ -736,10 +727,11 @@ EOF
 finalize_install() {
   CURRENT_PHASE="complete"
   save_state
+  section "Done"
   info "Install flow is complete"
-  info "Run: sudo ./install.sh verify"
+  info "Run: sudo bash ./install.sh verify"
   if [[ "$NO_EMAIL" == "0" ]]; then
-    info "After DNS and PTR have propagated, run: sudo ./install.sh doctor"
+    info "After DNS and PTR have propagated, run: sudo bash ./install.sh doctor"
   fi
   info "Saved config: ${CONFIG_FILE}"
   info "Saved state:  ${STATE_JSON}"
@@ -815,7 +807,7 @@ continue_install_from_state() {
       ;;
     complete)
       info "Install is already complete"
-      info "Run: sudo ./install.sh verify"
+      info "Run: sudo bash ./install.sh verify"
       ;;
     *)
       die "cannot continue from phase ${CURRENT_PHASE}"
@@ -861,7 +853,7 @@ Remove these if you intentionally want to start over:
 
     validate_install_args
     load_state
-    info "Found saved install state at phase ${CURRENT_PHASE}; continuing the same install command"
+    info "Continuing saved install from phase ${CURRENT_PHASE}"
     save_config
     continue_install_from_state
     return

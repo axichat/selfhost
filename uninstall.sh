@@ -20,7 +20,7 @@ die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 usage() {
   cat <<'EOF'
 Usage:
-  sudo ./uninstall.sh [options]
+  sudo bash ./uninstall.sh [options]
 
 Default behavior:
   - stops and removes the Axichat self-host services
