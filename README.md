@@ -74,7 +74,7 @@ cd ~/selfhost
 If you want all capabilities (chat and email):
 
 ```bash
-sudo ./install.sh install --domain example.com --public-token your-shared-token
+sudo bash ./install.sh install --domain example.com --public-token your-shared-token
 ```
 
 Choose your own public token. Everyone that uses your server will need to enter it into their Axichat clients, so it should be something you can remember and distribute. It is not a secret.
@@ -82,7 +82,7 @@ Choose your own public token. Everyone that uses your server will need to enter 
 If you do NOT want email:
 
 ```bash
-sudo ./install.sh install --domain example.com --no-email
+sudo bash ./install.sh install --domain example.com --no-email
 ```
 
 3. Follow the guided checkpoints.
@@ -100,8 +100,8 @@ Typical email checkpoints:
 ## Verify
 
 ```bash
-sudo ./install.sh verify
-sudo ./install.sh doctor
+sudo bash ./install.sh verify
+sudo bash ./install.sh doctor
 ```
 
 `verify` checks the local services and health endpoints. `doctor` adds higher-level checks and uses `dig` for DNS checks when it is available.
@@ -113,7 +113,7 @@ For normal installs (without `--no-email`), `verify` is the immediate local chec
 If you later pull a newer version of this repo and want to re-run the installed services with the same saved config, use:
 
 ```bash
-sudo ./install.sh upgrade
+sudo bash ./install.sh upgrade
 ```
 
 `upgrade` re-runs the saved app/service configuration. It does not restart the install from scratch.
@@ -125,7 +125,7 @@ If you use `fpush`, keep `/opt/fpush/settings.json` and the APNS `.p12` file it 
 To reset a demo box and try again from a clean local state, run:
 
 ```bash
-sudo ./uninstall.sh --yes
+sudo bash ./uninstall.sh --yes
 ```
 
 That removes the locally installed stack and then prints the manual DNS / PTR cleanup steps you still need to do off-server.
@@ -134,7 +134,7 @@ It removes the installed app stack, not the whole server history.
 For the full flag list, run:
 
 ```bash
-./install.sh help
+bash ./install.sh help
 ```
 
 If you rerun the same `install` command after an interruption, the wrapper continues from the saved phase instead of starting over.

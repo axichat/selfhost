@@ -139,8 +139,8 @@ have_glue_api_token() {
 }
 
 ensure_repo_layout() {
-  [[ -x "${ROOT_DIR}/ejabberd/install.sh" ]] || die "missing ejabberd/install.sh"
-  [[ -x "${ROOT_DIR}/stalwart/install.sh" ]] || die "missing stalwart/install.sh"
+  [[ -f "${ROOT_DIR}/ejabberd/install.sh" ]] || die "missing ejabberd/install.sh"
+  [[ -f "${ROOT_DIR}/stalwart/install.sh" ]] || die "missing stalwart/install.sh"
 }
 
 write_state_json() {
@@ -648,7 +648,7 @@ run_ejabberd_phase() {
     env_args+=("TURN_IPV4=$TURN_PUBLIC_IP")
   fi
 
-  env "${env_args[@]}" "$ROOT_DIR/ejabberd/install.sh"
+  env "${env_args[@]}" bash "$ROOT_DIR/ejabberd/install.sh"
 
   append_completed_phase "ejabberd_install"
   if [[ "$NO_EMAIL" == "1" ]]; then
@@ -677,7 +677,7 @@ run_stalwart_phase() {
   WEBADMIN_REMOTE_PORT="$WEBADMIN_REMOTE_PORT" \
   SKIP_FIREWALL="1" \
   SKIP_DNS_GUIDANCE="1" \
-  "$ROOT_DIR/stalwart/install.sh" "${args[@]}"
+  bash "$ROOT_DIR/stalwart/install.sh" "${args[@]}"
 
   append_completed_phase "stalwart_install"
   save_state

@@ -179,7 +179,7 @@ Defaults used by the installer/runtime:
 - Installer rewrites config/unit/env files and restarts services.
 - `email-glue` is restarted, so updated token settings apply immediately.
 - Domain creation and DNS records are handled in Webadmin. If the domain does not exist yet, the installer pauses and tells you what to do.
-- In the normal root-wrapper flow, `sudo ./install.sh upgrade` reuses the saved wrapper config and re-runs this component underneath.
+- In the normal root-wrapper flow, `sudo bash ./install.sh upgrade` reuses the saved wrapper config and re-runs this component underneath.
 
 ## Key files written
 
