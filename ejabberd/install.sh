@@ -6,10 +6,11 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ADMIN_USER="admin"
 : "${EJABBERD_VERSION_PREFIX:=26.}"
 : "${SKIP_FIREWALL:=0}"
-: "${SKIP_UFW_REDIRECT:=0}"
 FPUSH_COMMIT="42359ca"
 
 CFG_SRC="${SCRIPT_DIR}/ejabberd.yml"
+ACME_REDIRECT_UNIT_SRC="${SCRIPT_DIR}/systemd/ejabberd-acme-redirect.service"
+ACME_REDIRECT_UNIT_DST="/etc/systemd/system/ejabberd-acme-redirect.service"
 
 die() {
   echo "ERROR: $*" >&2
@@ -46,14 +47,6 @@ as_user() {
   local u="$1"
   shift
   runuser -u "$u" -- bash -lc "$*"
-}
-
-detect_ssh_port() {
-  local ssh_port=""
-  if command -v sshd >/dev/null 2>&1; then
-    ssh_port="$(sshd -T 2>/dev/null | awk '/^port /{print $2; exit}')"
-  fi
-  printf '%s\n' "${ssh_port:-22}"
 }
 
 load_existing_fpush_settings() {
@@ -106,38 +99,13 @@ has_domain_certificate() {
   "$EJABBERDCTL" list-certificates 2>/dev/null | awk -v d="${DOMAIN}" '$1==d{found=1} END{exit(found?0:1)}'
 }
 
-ensure_ufw_redirect() {
-  local before_rules="/etc/ufw/before.rules"
-  command -v ufw >/dev/null 2>&1 || die "ufw is required for firewall + port 80 redirect."
-  [[ -f "$before_rules" ]] || die "Missing ${before_rules}. Is ufw installed?"
+install_acme_redirect_service() {
+  [[ -f "$ACME_REDIRECT_UNIT_SRC" ]] || die "Missing ${ACME_REDIRECT_UNIT_SRC}"
+  command -v socat >/dev/null 2>&1 || die "socat is required for the ejabberd ACME port-80 forwarder"
 
-  python3 - <<'PY'
-from pathlib import Path
-
-path = Path("/etc/ufw/before.rules")
-text = path.read_text()
-
-marker = "# ejabberd port 80 redirect"
-if marker in text:
-    raise SystemExit(0)
-
-block = """# ejabberd port 80 redirect
-*nat
-:PREROUTING ACCEPT [0:0]
-:OUTPUT ACCEPT [0:0]
--A PREROUTING -p tcp --dport 80 -j REDIRECT --to-ports 5280
--A OUTPUT -p tcp -o lo --dport 80 -j REDIRECT --to-ports 5280
-COMMIT
-"""
-
-if "*filter" in text:
-    head, tail = text.split("*filter", 1)
-    new_text = head.rstrip("\n") + "\n\n" + block + "\n*filter" + tail
-else:
-    new_text = text.rstrip("\n") + "\n\n" + block
-
-path.write_text(new_text)
-PY
+  install -m 0644 "$ACME_REDIRECT_UNIT_SRC" "$ACME_REDIRECT_UNIT_DST"
+  systemctl daemon-reload
+  systemctl enable --now ejabberd-acme-redirect.service
 }
 
 [[ $EUID -eq 0 ]] || die "Run as root."
@@ -169,7 +137,7 @@ apt-get install -y --no-install-recommends \
   ca-certificates curl gnupg iproute2 python3
 
 apt-get install -y --no-install-recommends \
-  ufw \
+  socat \
   sqlite3 imagemagick fonts-dejavu-core gsfonts \
   git build-essential pkg-config libssl-dev
 
@@ -342,17 +310,15 @@ rm -f "$TMP_CFG"
 systemctl enable ejabberd >/dev/null 2>&1 || true
 
 echo
-if [[ "$SKIP_UFW_REDIRECT" == "1" ]]; then
-  echo "== Port 80 -> 5280 forwarding (ACME HTTP-01) =="
-  echo "Skipping UFW redirect because the root wrapper already manages it."
-else
-  echo "== Port 80 -> 5280 forwarding (ACME HTTP-01) =="
-  if ss -ltn '( sport = :80 )' | grep -q LISTEN; then
+echo "== Port 80 -> 5280 forwarding (ACME HTTP-01) =="
+if ss -ltn '( sport = :80 )' | grep -q LISTEN; then
+  if systemctl is-active --quiet ejabberd-acme-redirect.service; then
+    echo "Port-80 forwarder already active."
+  else
     die "Port 80 is already in use. Stop the service using port 80, then re-run."
   fi
-
-  ensure_ufw_redirect
-  ufw reload >/dev/null 2>&1 || true
+else
+  install_acme_redirect_service
 fi
 
 echo
@@ -369,28 +335,21 @@ elif command -v ufw >/dev/null 2>&1; then
   if ufw status 2>/dev/null | head -n1 | grep -qi "inactive"; then
     ufw_active="no"
   fi
-  if [[ -f /etc/default/ufw ]]; then
-    sed -i 's/^IPV6=.*/IPV6=yes/' /etc/default/ufw || true
-  fi
   if [[ "$ufw_active" == "no" ]]; then
-    ufw default deny incoming >/dev/null 2>&1 || true
-    ufw default allow outgoing >/dev/null 2>&1 || true
+    echo "ufw is installed but inactive; not enabling it or changing global policy."
+    echo "Open the ejabberd ports yourself if you want to use UFW."
+  else
+    ufw allow 5222/tcp >/dev/null 2>&1 || true
+    ufw allow 5223/tcp >/dev/null 2>&1 || true
+    ufw allow 5269/tcp >/dev/null 2>&1 || true
+    ufw allow 5443/tcp >/dev/null 2>&1 || true
+    ufw allow 80/tcp >/dev/null 2>&1 || true
+    ufw allow 3478/udp >/dev/null 2>&1 || true
+    ufw reload >/dev/null 2>&1 || true
+    echo "Added app-specific ufw rules."
   fi
-  ufw allow "$(detect_ssh_port)/tcp" >/dev/null 2>&1 || true
-  ufw allow 5222/tcp >/dev/null 2>&1 || true
-  ufw allow 5223/tcp >/dev/null 2>&1 || true
-  ufw allow 5269/tcp >/dev/null 2>&1 || true
-  ufw allow 5443/tcp >/dev/null 2>&1 || true
-  ufw allow 5280/tcp >/dev/null 2>&1 || true
-  ufw allow 80/tcp >/dev/null 2>&1 || true
-  ufw allow 3478/udp >/dev/null 2>&1 || true
-  if [[ "$ufw_active" == "no" ]]; then
-    ufw --force enable >/dev/null 2>&1 || true
-  fi
-  ufw reload >/dev/null 2>&1 || true
-  echo "ufw rules applied."
 else
-  echo "ufw not installed; skipping firewall changes."
+  echo "ufw not installed; not changing host firewall rules."
 fi
 
 echo
@@ -415,7 +374,7 @@ if has_domain_certificate; then
   echo "== Existing certificate found for ${DOMAIN}; skipping ACME request =="
 else
   echo "== Requesting TLS certificate (Let's Encrypt) =="
-  echo "NOTE: ACME requires inbound HTTP on port 80 (this script forwards it to ejabberd port 5280)."
+  echo "NOTE: ACME requires inbound HTTP on port 80 (the bundled port-80 forwarder sends it to ejabberd port 5280)."
   echo "If this fails, confirm ${DOMAIN} resolves to this server and that inbound TCP/80 is allowed."
   "$EJABBERDCTL" request-certificate "$DOMAIN" || die "ACME certificate request failed."
   systemctl restart ejabberd
@@ -575,7 +534,7 @@ echo "  - 5222/tcp  (client STARTTLS required)"
 echo "  - 5223/tcp  (client direct TLS)"
 echo "  - 5269/tcp  (server-to-server federation)"
 echo "  - 5443/tcp  (web admin, websockets, upload, captcha, web registration)"
-echo "  - 5280/tcp  (internal HTTP for ACME challenge; port 80 is forwarded here)"
+echo "  - 5280/tcp  (internal-only HTTP for ACME challenge; do not expose it publicly)"
 echo "  - 80/tcp    (must be open for ACME HTTP-01)"
 echo "  - 3478/udp  (STUN/TURN)"
 echo

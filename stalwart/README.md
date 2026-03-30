@@ -29,6 +29,8 @@ export DOMAIN=example.com
 - `openssl` available (installer uses it for password hashing and token generation).
 - For common server architectures (`amd64` and `arm64`), this repo now ships bundled Linux `email-glue` binaries.
 - On other architectures, the script falls back to installing `golang-go` and building `email-glue` on the target host.
+- If UFW is already active, the component script adds only the mail-specific UFW allow rules.
+- If UFW is inactive or not installed, open the mail ports yourself. This repo does not enable or harden a host firewall for you.
 
 ## Direct component command
 
@@ -76,36 +78,37 @@ Recommended invocations:
 ```
 
 - `--public-token`
-- Requires `X-Client-Token` / `X-Auth-Token` for `email-glue`.
-- This is the default if you omit the flag.
-- Reuses `/root/stalwart-secrets/client_token.txt` if present, otherwise generates one.
-- This is mainly for direct/manual component use; the root `../install.sh` flow expects you to choose the token explicitly.
+  Requires `X-Client-Token` / `X-Auth-Token` for `email-glue`.
+  This is the default if you omit the flag.
+  Reuses `/root/stalwart-secrets/client_token.txt` if present, otherwise generates one.
+  This is mainly for direct/manual component use; the root `../install.sh` flow expects you to choose the token explicitly.
 
 - `--public-token=TOKEN`
-- Same as `--public-token`, but persists the exact token value you provide to `/root/stalwart-secrets/client_token.txt`.
+  Same as `--public-token`, but persists the exact token value you provide to `/root/stalwart-secrets/client_token.txt`.
 
 - `--no-public-token`
-- Disables the public client-token requirement.
-- Only do this if `8443` is not internet-reachable or you intentionally want that behavior.
+  Disables the public client-token requirement.
+  Only do this if `8443` is not internet-reachable or you intentionally want that behavior.
 
 - `--glue-api-token=TOKEN`
-- Uses and persists this Stalwart Admin API key for `email-glue`.
-- Without this flag, installer reuses `/root/stalwart-secrets/glue_api_token.txt` when valid.
-- If the file is missing or invalid, the installer pauses and tells you how to create a new one in Webadmin.
+  Uses and persists this Stalwart Admin API key for `email-glue`.
+  Without this flag, installer reuses `/root/stalwart-secrets/glue_api_token.txt` when valid.
+  If the file is missing or invalid, the installer pauses and tells you how to create a new one in Webadmin.
 
 ## Stalwart Webadmin token flow
 
 There are two different tokens in this setup:
 
 - Glue API token:
-- This is the Stalwart Admin API key that `email-glue` uses to create/delete/change mail users.
-- It is stored at `/root/stalwart-secrets/glue_api_token.txt`.
-- You can supply it up front with `--glue-api-token=TOKEN`, or create it in Webadmin when prompted.
+  This is the Stalwart Admin API key that `email-glue` uses to create/delete/change mail users.
+  It is stored at `/root/stalwart-secrets/glue_api_token.txt`.
+  You can supply it up front with `--glue-api-token=TOKEN`, or create it in Webadmin when prompted.
 
 - Public client token:
-- This is the token remote clients send as `X-Client-Token` or `X-Auth-Token` to reach `email-glue` on `https://host:8443`.
-- It is stored at `/root/stalwart-secrets/client_token.txt`.
-- By default it is enabled and either reused or generated automatically.
+  This is the token remote clients send as `X-Client-Token` or `X-Auth-Token` to reach `email-glue` on `https://host:8443`.
+  It is stored at `/root/stalwart-secrets/client_token.txt`.
+  In the direct component flow it is enabled by default and either reused or generated automatically.
+  In the normal root-wrapper flow you are expected to choose it explicitly.
 
 If you need to create the glue API token manually, do this:
 
@@ -113,32 +116,32 @@ If you need to create the glue API token manually, do this:
 2. From your laptop, start the tunnel it shows.
 3. Open `http://127.0.0.1:18080/login` or the tunneled port it printed.
 4. Login as `admin` with the fallback password the installer printed or stored in `/root/stalwart-secrets/fallback_admin_password.txt`.
-5. Create an API key principal:
-6. Type: `apiKey`
-7. Name: `email-glue`
-8. Roles: `admin`
-9. Generate/copy the secret value.
-10. Either paste that secret when the installer prompts, or rerun with `--glue-api-token=TOKEN`.
+5. Create an API key principal with these values:
+   - Type: `apiKey`
+   - Name: `email-glue`
+   - Roles: `admin`
+6. Generate and copy the secret value.
+7. Either paste that secret when the installer prompts, or rerun with `--glue-api-token=TOKEN`.
 
 ## Installer environment overrides
 
 These affect the Webadmin tunnel instructions printed by `install.sh`:
 
 - `STALWART_SSH_HOST`
-- Hostname/IP shown in the SSH tunnel command.
-- Default: `$DOMAIN`
+  Hostname/IP shown in the SSH tunnel command.
+  Default: `$DOMAIN`
 
 - `STALWART_SSH_USER`
-- SSH user shown in the tunnel command.
-- Default: `root`
+  SSH user shown in the tunnel command.
+  Default: `root`
 
 - `TUNNEL_LOCAL_PORT`
-- Local port on your laptop used in the tunnel instructions.
-- Default: `18080`
+  Local port on your laptop used in the tunnel instructions.
+  Default: `18080`
 
 - `WEBADMIN_REMOTE_PORT`
-- Remote Stalwart Webadmin/API port on the server.
-- Default: `8080`
+  Remote Stalwart Webadmin/API port on the server.
+  Default: `8080`
 
 ## email-glue runtime environment
 

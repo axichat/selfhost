@@ -25,7 +25,7 @@ Usage:
 Default behavior:
   - stops and removes the Axichat self-host services
   - deletes the local app data, secrets, units, and wrapper state
-  - removes the app-specific UFW rules and port-80 redirect block
+  - removes the ejabberd port-80 forwarder service and any old redirect block this repo added
   - purges the ejabberd package so the next demo attempt starts cleanly
 
 Options:
@@ -94,19 +94,20 @@ confirm_teardown() {
   cat <<EOF
 This will remove the local Axichat self-host install for ${DOMAIN_HINT}:
   - ejabberd, Stalwart, email-glue, and fpush services
-  - local app data, secrets, wrapper config/state, and app-specific firewall rules
+  - local app data, secrets, wrapper config/state, and the ejabberd port-80 forwarder this repo added
   - the ejabberd package itself$([[ "$PURGE_EJABBERD_PACKAGE" == "1" ]] && printf '' || printf ' (kept installed)')
 
 This does NOT:
   - destroy the VPS
-  - undo f5m.sh / l5m.sh host hardening
+  - undo unrelated server-level changes you made outside this repo
+  - remove generic allow-rules from your firewall
   - delete DNS/PTR records for you
 EOF
 
   local answer
-  read -r -p "Continue with teardown? [y/N]: " answer || true
+  read -r -p "Continue with uninstall? [y/N]: " answer || true
   answer="$(printf '%s' "${answer:-}" | tr '[:upper:]' '[:lower:]')"
-  [[ "$answer" == "y" || "$answer" == "yes" ]] || die "teardown cancelled"
+  [[ "$answer" == "y" || "$answer" == "yes" ]] || die "uninstall cancelled"
 }
 
 stop_disable_unit() {
@@ -130,29 +131,6 @@ remove_dir_if_present() {
   for path in "$@"; do
     [[ -e "$path" ]] || continue
     rm -rf "$path"
-  done
-}
-
-remove_app_ufw_rules() {
-  command -v ufw >/dev/null 2>&1 || return 0
-
-  local rules=(
-    "25/tcp"
-    "80/tcp"
-    "465/tcp"
-    "587/tcp"
-    "993/tcp"
-    "8443/tcp"
-    "5222/tcp"
-    "5223/tcp"
-    "5269/tcp"
-    "5280/tcp"
-    "5443/tcp"
-    "3478/udp"
-  )
-  local rule
-  for rule in "${rules[@]}"; do
-    ufw --force delete allow "$rule" >/dev/null 2>&1 || true
   done
 }
 
@@ -203,6 +181,7 @@ teardown_services() {
     email-glue.service \
     stalwart.service \
     fpush.service \
+    ejabberd-acme-redirect.service \
     ejabberd
 
   if command -v docker >/dev/null 2>&1; then
@@ -218,6 +197,7 @@ teardown_systemd_units() {
     /etc/systemd/system/update-stalwart-cert.service \
     /etc/systemd/system/update-stalwart-cert.timer \
     /etc/systemd/system/fpush.service \
+    /etc/systemd/system/ejabberd-acme-redirect.service \
     /usr/local/bin/email-glue \
     /usr/local/bin/sync-ejabberd-cert.sh \
     /usr/local/bin/update-stalwart-cert.sh \
@@ -269,8 +249,7 @@ teardown_ejabberd_package() {
 }
 
 teardown_firewall() {
-  info "Removing app-specific firewall rules"
-  remove_app_ufw_rules
+  info "Removing the old ejabberd UFW redirect block if this repo added it"
   remove_ufw_redirect_block
   reload_ufw
 }
@@ -278,7 +257,7 @@ teardown_firewall() {
 print_offserver_checklist() {
   cat <<EOF
 
-Off-server teardown for ${DOMAIN_HINT}:
+Off-server uninstall follow-up for ${DOMAIN_HINT}:
 1. Delete the Stalwart mail records you added in your DNS provider:
    - MX
    - SPF TXT
@@ -288,8 +267,8 @@ Off-server teardown for ${DOMAIN_HINT}:
 3. Remove the PTR / reverse-DNS record in your hosting provider panel.
 4. If this is a throwaway demo VPS, the cleanest reset is still deleting the server or reverting a snapshot.
 
-Local teardown is mostly scriptable and should be easy.
-Off-server teardown is still manual, but usually only a few DNS/PTR deletions.
+Local uninstall is mostly scriptable and should be easy.
+Off-server cleanup is still manual, but usually only a few DNS/PTR deletions.
 EOF
 }
 
@@ -306,7 +285,7 @@ main() {
   teardown_ejabberd_package
   teardown_firewall
 
-  info "Local teardown is complete"
+  info "Local uninstall is complete"
   print_offserver_checklist
 }
 

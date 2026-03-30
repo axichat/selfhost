@@ -15,10 +15,6 @@ DOMAIN=""
 NO_EMAIL="0"
 PUBLIC_TOKEN=""
 GLUE_API_TOKEN=""
-PROFILE="existing-server"
-SSH_PUBKEY_FILE=""
-ENABLE_SSH_LOCKDOWN="0"
-SSH_LOCKDOWN_APPLIED="0"
 ENABLE_FPUSH="0"
 TURN_PUBLIC_IP=""
 STALWART_SSH_HOST=""
@@ -31,9 +27,6 @@ ARG_DOMAIN_SET="0"
 ARG_PUBLIC_TOKEN_SET="0"
 ARG_GLUE_API_TOKEN_SET="0"
 ARG_NO_EMAIL_SET="0"
-ARG_PROFILE_SET="0"
-ARG_SSH_PUBKEY_FILE_SET="0"
-ARG_ENABLE_SSH_LOCKDOWN_SET="0"
 ARG_ENABLE_FPUSH_SET="0"
 ARG_TURN_PUBLIC_IP_SET="0"
 ARG_STALWART_SSH_HOST_SET="0"
@@ -70,10 +63,6 @@ Install options:
                                   Shared email-glue client token, not an admin password.
   --no-email                      Skip Stalwart and email-glue.
   --glue-api-token TOKEN          Optional at install time.
-  --profile fresh-server|existing-server
-                                  Default: existing-server.
-  --ssh-pubkey-file PATH          Passed to f5m.sh when profile=fresh-server.
-  --enable-ssh-lockdown           Run l5m.sh after the install is fully completed.
   --enable-fpush                  Pre-answer the ejabberd installer with fpush enabled.
   --turn-public-ip IP             Pre-answer the ejabberd installer TURN IP prompt.
   --stalwart-ssh-host HOST        Host shown in the Webadmin tunnel instructions.
@@ -152,8 +141,6 @@ have_glue_api_token() {
 ensure_repo_layout() {
   [[ -x "${ROOT_DIR}/ejabberd/install.sh" ]] || die "missing ejabberd/install.sh"
   [[ -x "${ROOT_DIR}/stalwart/install.sh" ]] || die "missing stalwart/install.sh"
-  [[ -x "${ROOT_DIR}/f5m.sh" ]] || die "missing f5m.sh"
-  [[ -x "${ROOT_DIR}/l5m.sh" ]] || die "missing l5m.sh"
 }
 
 write_state_json() {
@@ -177,10 +164,8 @@ write_state_json() {
 
   local public_present=false
   local glue_present=false
-  local ssh_lockdown_applied=false
   [[ "$(have_public_token && echo 1 || echo 0)" == "1" ]] && public_present=true
   [[ "$(have_glue_api_token && echo 1 || echo 0)" == "1" ]] && glue_present=true
-  [[ "$SSH_LOCKDOWN_APPLIED" == "1" ]] && ssh_lockdown_applied=true
 
   mkdir -p "$STATE_DIR"
   cat >"$STATE_JSON" <<EOF
@@ -190,8 +175,6 @@ write_state_json() {
   "current_phase": "$(json_escape "$CURRENT_PHASE")",
   "completed_phases": [${completed_json}],
   "domain": "$(json_escape "$DOMAIN")",
-  "profile": "$(json_escape "$PROFILE")",
-  "ssh_lockdown_applied": ${ssh_lockdown_applied},
   "secret_presence": {
     "public_token": ${public_present},
     "glue_api_token": ${glue_present}
@@ -209,7 +192,6 @@ save_state() {
     write_shell_var "SCHEMA_VERSION" "$SCHEMA_VERSION"
     write_shell_var "CURRENT_PHASE" "$CURRENT_PHASE"
     write_shell_var "COMPLETED_PHASES" "$COMPLETED_PHASES"
-    write_shell_var "SSH_LOCKDOWN_APPLIED" "$SSH_LOCKDOWN_APPLIED"
     write_shell_var "UPDATED_AT" "$UPDATED_AT"
   } >"$STATE_FILE"
   chmod 0600 "$STATE_FILE"
@@ -230,9 +212,6 @@ save_config() {
     write_shell_var "NO_EMAIL" "$NO_EMAIL"
     write_shell_var "PUBLIC_TOKEN" "$PUBLIC_TOKEN"
     write_shell_var "GLUE_API_TOKEN" "$GLUE_API_TOKEN"
-    write_shell_var "PROFILE" "$PROFILE"
-    write_shell_var "SSH_PUBKEY_FILE" "$SSH_PUBKEY_FILE"
-    write_shell_var "ENABLE_SSH_LOCKDOWN" "$ENABLE_SSH_LOCKDOWN"
     write_shell_var "ENABLE_FPUSH" "$ENABLE_FPUSH"
     write_shell_var "TURN_PUBLIC_IP" "$TURN_PUBLIC_IP"
     write_shell_var "STALWART_SSH_HOST" "$STALWART_SSH_HOST"
@@ -267,15 +246,12 @@ validate_install_matches_saved_config() {
   local cli_no_email="$2"
   local cli_public_token="$3"
   local cli_glue_api_token="$4"
-  local cli_profile="$5"
-  local cli_ssh_pubkey_file="$6"
-  local cli_enable_ssh_lockdown="$7"
-  local cli_enable_fpush="$8"
-  local cli_turn_public_ip="$9"
-  local cli_stalwart_ssh_host="${10}"
-  local cli_stalwart_ssh_user="${11}"
-  local cli_tunnel_local_port="${12}"
-  local cli_webadmin_remote_port="${13}"
+  local cli_enable_fpush="$5"
+  local cli_turn_public_ip="$6"
+  local cli_stalwart_ssh_host="$7"
+  local cli_stalwart_ssh_user="$8"
+  local cli_tunnel_local_port="$9"
+  local cli_webadmin_remote_port="${10}"
 
   if [[ "$ARG_DOMAIN_SET" == "1" && "$cli_domain" != "$DOMAIN" ]]; then
     die "a saved install already exists for domain ${DOMAIN}, not ${cli_domain}.
@@ -286,9 +262,6 @@ If you intentionally want to start over from scratch, remove:
   fi
   [[ "$ARG_NO_EMAIL_SET" != "1" || "$cli_no_email" == "$NO_EMAIL" ]] || die "the saved install mode does not match this command"
   [[ "$ARG_PUBLIC_TOKEN_SET" != "1" || "$cli_public_token" == "$PUBLIC_TOKEN" ]] || die "the saved public token does not match this command"
-  [[ "$ARG_PROFILE_SET" != "1" || "$cli_profile" == "$PROFILE" ]] || die "the saved profile does not match this command"
-  [[ "$ARG_SSH_PUBKEY_FILE_SET" != "1" || "$cli_ssh_pubkey_file" == "$SSH_PUBKEY_FILE" ]] || die "the saved --ssh-pubkey-file does not match this command"
-  [[ "$ARG_ENABLE_SSH_LOCKDOWN_SET" != "1" || "$cli_enable_ssh_lockdown" == "$ENABLE_SSH_LOCKDOWN" ]] || die "the saved SSH-lockdown setting does not match this command"
   [[ "$ARG_ENABLE_FPUSH_SET" != "1" || "$cli_enable_fpush" == "$ENABLE_FPUSH" ]] || die "the saved fpush setting does not match this command"
   [[ "$ARG_TURN_PUBLIC_IP_SET" != "1" || "$cli_turn_public_ip" == "$TURN_PUBLIC_IP" ]] || die "the saved TURN public IP does not match this command"
   [[ "$ARG_STALWART_SSH_HOST_SET" != "1" || "$cli_stalwart_ssh_host" == "$STALWART_SSH_HOST" ]] || die "the saved Stalwart SSH host does not match this command"
@@ -328,7 +301,6 @@ print_install_overview() {
 ${heading} summary:
   Domain:  ${DOMAIN}
   Mode:    $([[ "$NO_EMAIL" == "1" ]] && printf 'xmpp-only (--no-email)' || printf 'full stack (xmpp + email)')
-  Profile: ${PROFILE}
   Config:  ${CONFIG_FILE}
   State:   ${STATE_JSON}
 EOF
@@ -349,93 +321,39 @@ EOF
   fi
 
   cat <<'EOF'
+The installer does not do generic SSH hardening or baseline server-security setup.
+If UFW is already active, it will add only the app-specific UFW rules needed for this stack.
 If the script pauses, keep it open and do the off-server step it printed.
 If the script gets interrupted, rerun the same install command.
 EOF
 }
 
-ensure_ufw_redirect() {
-  local before_rules="/etc/ufw/before.rules"
-  command -v ufw >/dev/null 2>&1 || die "ufw is required for firewall setup"
-  [[ -f "$before_rules" ]] || die "missing ${before_rules}; ufw is not fully installed"
-
-  python3 - <<'PY'
-from pathlib import Path
-
-path = Path("/etc/ufw/before.rules")
-text = path.read_text()
-
-marker = "# ejabberd port 80 redirect"
-if marker in text:
-    raise SystemExit(0)
-
-block = """# ejabberd port 80 redirect
-*nat
-:PREROUTING ACCEPT [0:0]
-:OUTPUT ACCEPT [0:0]
--A PREROUTING -p tcp --dport 80 -j REDIRECT --to-ports 5280
--A OUTPUT -p tcp -o lo --dport 80 -j REDIRECT --to-ports 5280
-COMMIT
-"""
-
-if "*filter" in text:
-    head, tail = text.split("*filter", 1)
-    new_text = head.rstrip("\n") + "\n\n" + block + "\n*filter" + tail
-else:
-    new_text = text.rstrip("\n") + "\n\n" + block
-
-path.write_text(new_text)
-PY
-}
-
-ensure_firewall_dependencies() {
-  local packages=()
-  command -v python3 >/dev/null 2>&1 || packages+=("python3")
-  command -v ufw >/dev/null 2>&1 || packages+=("ufw")
-
-  if [[ ${#packages[@]} -gt 0 ]]; then
-    info "Installing firewall dependencies: ${packages[*]}"
-    apt-get update -y
-    apt-get install -y "${packages[@]}"
-  fi
-}
-
-detect_ssh_port() {
-  local ssh_port=""
-  if command -v sshd >/dev/null 2>&1; then
-    ssh_port="$(sshd -T 2>/dev/null | awk '/^port /{print $2; exit}')"
-  fi
-  printf '%s\n' "${ssh_port:-22}"
-}
-
 apply_firewall_rules() {
-  local ports_tcp=(5222 5223 5269 5443 5280 80)
+  local ports_tcp=(5222 5223 5269 5443 80)
   local ports_udp=(3478)
   local port
-  local ssh_port
   local ufw_active="yes"
 
   if [[ "$NO_EMAIL" == "0" ]]; then
     ports_tcp+=(25 465 587 993 8443)
   fi
 
-  ensure_firewall_dependencies
-  if [[ -f /etc/default/ufw ]]; then
-    sed -i 's/^IPV6=.*/IPV6=yes/' /etc/default/ufw || true
+  if ! command -v ufw >/dev/null 2>&1; then
+    info "UFW is not installed; not changing host firewall rules"
+    info "Open the required app ports yourself in your provider firewall or host firewall"
+    return 0
   fi
 
   if ufw status 2>/dev/null | head -n1 | grep -qi "inactive"; then
     ufw_active="no"
   fi
   if [[ "$ufw_active" == "no" ]]; then
-    ufw default deny incoming >/dev/null 2>&1 || true
-    ufw default allow outgoing >/dev/null 2>&1 || true
+    info "UFW is installed but inactive; not enabling it or changing global policy"
+    info "Open the required app ports yourself if you want to use UFW"
+    return 0
   fi
 
-  ensure_ufw_redirect
-  ssh_port="$(detect_ssh_port)"
-  info "Preserving SSH access on tcp/${ssh_port}"
-  ufw allow "${ssh_port}/tcp" >/dev/null 2>&1 || true
+  info "UFW is active; adding app-specific allow rules only"
 
   for port in "${ports_tcp[@]}"; do
     ufw allow "${port}/tcp" >/dev/null 2>&1 || true
@@ -444,9 +362,6 @@ apply_firewall_rules() {
     ufw allow "${port}/udp" >/dev/null 2>&1 || true
   done
 
-  if [[ "$ufw_active" == "no" ]]; then
-    ufw --force enable >/dev/null 2>&1 || true
-  fi
   ufw reload >/dev/null 2>&1 || true
 }
 
@@ -526,9 +441,7 @@ validate_install_args() {
 
 Example:
   sudo ./install.sh install --domain example.com --public-token your-shared-token"
-  [[ "$PROFILE" == "fresh-server" || "$PROFILE" == "existing-server" ]] || die "--profile must be fresh-server or existing-server"
   [[ "$NO_EMAIL" == "0" || "$NO_EMAIL" == "1" ]] || die "internal error: NO_EMAIL must be 0 or 1"
-  [[ "$ENABLE_SSH_LOCKDOWN" == "0" || "$ENABLE_SSH_LOCKDOWN" == "1" ]] || die "internal error: ENABLE_SSH_LOCKDOWN must be 0 or 1"
   [[ "$ENABLE_FPUSH" == "0" || "$ENABLE_FPUSH" == "1" ]] || die "internal error: ENABLE_FPUSH must be 0 or 1"
 
   if [[ "$NO_EMAIL" == "1" ]]; then
@@ -597,33 +510,6 @@ parse_install_args() {
       --no-email)
         NO_EMAIL="1"
         ARG_NO_EMAIL_SET="1"
-        shift
-        ;;
-      --profile)
-        [[ $# -ge 2 ]] || die "--profile requires a value"
-        PROFILE="$2"
-        ARG_PROFILE_SET="1"
-        shift 2
-        ;;
-      --profile=*)
-        PROFILE="${1#*=}"
-        ARG_PROFILE_SET="1"
-        shift
-        ;;
-      --ssh-pubkey-file)
-        [[ $# -ge 2 ]] || die "--ssh-pubkey-file requires a value"
-        SSH_PUBKEY_FILE="$2"
-        ARG_SSH_PUBKEY_FILE_SET="1"
-        shift 2
-        ;;
-      --ssh-pubkey-file=*)
-        SSH_PUBKEY_FILE="${1#*=}"
-        ARG_SSH_PUBKEY_FILE_SET="1"
-        shift
-        ;;
-      --enable-ssh-lockdown)
-        ENABLE_SSH_LOCKDOWN="1"
-        ARG_ENABLE_SSH_LOCKDOWN_SET="1"
         shift
         ;;
       --enable-fpush)
@@ -716,7 +602,7 @@ run_preflight_phase() {
   info "Progress is saved automatically. If anything interrupts the install, rerun the same install command."
 
   append_completed_phase "preflight"
-  CURRENT_PHASE="host_setup"
+  CURRENT_PHASE="firewall_setup"
   save_state
 }
 
@@ -728,27 +614,7 @@ run_upgrade_preflight() {
   run_preflight_checks upgrade
 
   info "Re-running the saved configuration against the existing install"
-  info "Upgrade mode skips the fresh-server bootstrap wrapper and keeps the saved install state if the rerun fails"
-}
-
-run_host_setup_phase() {
-  CURRENT_PHASE="host_setup"
-  save_state
-
-  if [[ "$PROFILE" == "fresh-server" ]]; then
-    info "Running fresh-server host setup via f5m.sh"
-    if [[ -n "$SSH_PUBKEY_FILE" ]]; then
-      SSH_USER=root SSH_PUBKEY_FILE="$SSH_PUBKEY_FILE" "$ROOT_DIR/f5m.sh"
-    else
-      SSH_USER=root "$ROOT_DIR/f5m.sh"
-    fi
-  else
-    info "Skipping f5m.sh because profile=existing-server"
-  fi
-
-  append_completed_phase "host_setup"
-  CURRENT_PHASE="firewall_setup"
-  save_state
+  info "Upgrade mode keeps the saved install state if the rerun fails"
 }
 
 run_firewall_phase() {
@@ -776,11 +642,13 @@ run_ejabberd_phase() {
   local fpush_answer="no"
   [[ "$ENABLE_FPUSH" == "1" ]] && fpush_answer="yes"
 
+  local -a env_args
+  env_args=("DOMAIN=$DOMAIN" "ENABLE_FPUSH=$fpush_answer" "SKIP_FIREWALL=1")
   if [[ -n "$TURN_PUBLIC_IP" ]]; then
-    DOMAIN="$DOMAIN" ENABLE_FPUSH="$fpush_answer" TURN_IPV4="$TURN_PUBLIC_IP" SKIP_FIREWALL="1" SKIP_UFW_REDIRECT="1" "$ROOT_DIR/ejabberd/install.sh"
-  else
-    DOMAIN="$DOMAIN" ENABLE_FPUSH="$fpush_answer" SKIP_FIREWALL="1" SKIP_UFW_REDIRECT="1" "$ROOT_DIR/ejabberd/install.sh"
+    env_args+=("TURN_IPV4=$TURN_PUBLIC_IP")
   fi
+
+  env "${env_args[@]}" "$ROOT_DIR/ejabberd/install.sh"
 
   append_completed_phase "ejabberd_install"
   if [[ "$NO_EMAIL" == "1" ]]; then
@@ -865,17 +733,8 @@ EOF
   save_state
 }
 
-run_optional_ssh_lockdown() {
-  if [[ "$ENABLE_SSH_LOCKDOWN" == "1" && "$SSH_LOCKDOWN_APPLIED" == "0" ]]; then
-    info "Running l5m.sh because --enable-ssh-lockdown was requested"
-    "$ROOT_DIR/l5m.sh"
-    SSH_LOCKDOWN_APPLIED="1"
-  fi
-}
-
 finalize_install() {
   CURRENT_PHASE="complete"
-  run_optional_ssh_lockdown
   save_state
   info "Install flow is complete"
   info "Run: sudo ./install.sh verify"
@@ -902,7 +761,6 @@ continue_install_from_state() {
   case "$CURRENT_PHASE" in
     preflight)
       run_preflight_phase
-      run_host_setup_phase
       run_firewall_phase
       run_ejabberd_phase
       if [[ "$NO_EMAIL" == "1" ]]; then
@@ -913,7 +771,7 @@ continue_install_from_state() {
       fi
       ;;
     host_setup)
-      run_host_setup_phase
+      info "Skipping the removed host-setup phase from an older installer state"
       run_firewall_phase
       run_ejabberd_phase
       if [[ "$NO_EMAIL" == "1" ]]; then
@@ -981,9 +839,6 @@ Remove these if you intentionally want to start over:
     local cli_no_email="$NO_EMAIL"
     local cli_public_token="$PUBLIC_TOKEN"
     local cli_glue_api_token="$GLUE_API_TOKEN"
-    local cli_profile="$PROFILE"
-    local cli_ssh_pubkey_file="$SSH_PUBKEY_FILE"
-    local cli_enable_ssh_lockdown="$ENABLE_SSH_LOCKDOWN"
     local cli_enable_fpush="$ENABLE_FPUSH"
     local cli_turn_public_ip="$TURN_PUBLIC_IP"
     local cli_stalwart_ssh_host="$STALWART_SSH_HOST"
@@ -997,9 +852,6 @@ Remove these if you intentionally want to start over:
       "$cli_no_email" \
       "$cli_public_token" \
       "$cli_glue_api_token" \
-      "$cli_profile" \
-      "$cli_ssh_pubkey_file" \
-      "$cli_enable_ssh_lockdown" \
       "$cli_enable_fpush" \
       "$cli_turn_public_ip" \
       "$cli_stalwart_ssh_host" \
@@ -1020,7 +872,6 @@ Remove these if you intentionally want to start over:
 
   CURRENT_PHASE="preflight"
   COMPLETED_PHASES=""
-  SSH_LOCKDOWN_APPLIED="0"
   save_state
 
   continue_install_from_state
@@ -1133,10 +984,9 @@ cmd_doctor() {
   local failed=0
   local warned=0
 
-  printf 'Config: domain=%s mode=%s profile=%s phase=%s\n' \
+  printf 'Config: domain=%s mode=%s phase=%s\n' \
     "$DOMAIN" \
     "$([[ "$NO_EMAIL" == "1" ]] && echo xmpp-only || echo full)" \
-    "$PROFILE" \
     "$CURRENT_PHASE"
 
   cmd_verify || failed=1

@@ -2,16 +2,13 @@
 
 * * *
 
-# Self-Host Quick Start
+# Self-Hosting Quick Start
 
-This directory installs the Axichat self-host stack on a Debian server you control.
-
-- Default mode: `ejabberd` + `Stalwart` + `email-glue`
-- Opt-out mode: `ejabberd` only with `--no-email`
+This directory installs the Axichat self-host stack on your (Debian) server.
 
 The public entrypoint is the root [`install.sh`](install.sh).
-If you are doing a normal self-host install, start here and stay here. You should not need prior ejabberd or Stalwart knowledge; the script pauses and tells you exactly what to do.
-[`ejabberd/README.md`](ejabberd/README.md) and [`stalwart/README.md`](stalwart/README.md) are advanced/manual documents for troubleshooting, recovery, or direct component work.
+You should not need prior ejabberd or Stalwart knowledge; the script pauses and tells you exactly what to do.
+[`ejabberd/README.md`](ejabberd/README.md) and [`stalwart/README.md`](stalwart/README.md) are advanced/manual documents for troubleshooting.
 
 ## Why Self-Host
 
@@ -40,15 +37,18 @@ Extra ports if you are not using `--no-email`:
 
 - `25/tcp`, `465/tcp`, `587/tcp`, `993/tcp`, `8443/tcp`
 
-If you enable email, there are real off-server tasks after the server install:
+The installer does not do generic SSH hardening or baseline server-security setup.
+If UFW is already active on the server, it adds only the app-specific UFW rules for this stack.
+If UFW is inactive or not installed, open the required ports yourself in your provider firewall or host firewall.
+The installer still sets up the local ejabberd ACME port-80 forwarder itself, because that is part of the app stack rather than general firewall policy.
+
+If you leave email enabled, the following must be done separately from the script:
 
 - Stalwart Webadmin over an SSH tunnel
 - copying DNS records from Webadmin into your DNS provider
 - setting PTR / reverse DNS with your host or provider
 
 PTR / reverse DNS is usually set in your VPS or hosting provider panel, not in your normal DNS zone editor.
-
-For normal installs on common Linux servers (`amd64` and `arm64`), the repo now ships a bundled `email-glue` binary. You do not need Go installed on the server for those cases.
 
 ## Install
 
@@ -71,53 +71,24 @@ cd ~/selfhost
 
 2. Choose one of these entrypoints.
 
-Full stack, recommended:
+If you want all capabilities (chat and email):
 
 ```bash
 sudo ./install.sh install --domain example.com --public-token your-shared-token
 ```
 
-Choose that public token yourself. It is the client-facing token people will need for `email-glue`, so it should be something you can remember and distribute. It is not your admin password and it is not an SMTP password.
+Choose your own public token. Everyone that uses your server will need to enter it into their Axichat clients, so it should be something you can remember and distribute. It is not a secret.
 
-XMPP only:
+If you do NOT want email:
 
 ```bash
 sudo ./install.sh install --domain example.com --no-email
-```
-
-Fresh dedicated host, with the initial hardening wrapper:
-
-```bash
-sudo ./install.sh install \
-  --domain example.com \
-  --public-token your-shared-token \
-  --profile fresh-server \
-  --ssh-pubkey-file ~/.ssh/id_ed25519.pub
 ```
 
 3. Follow the guided checkpoints.
 
 When the installer needs something off-server, it prints the exact steps and then waits for you in the same terminal. In the normal flow, you do not need to open the component readmes.
 If the script gets interrupted, rerun the same `install` command and it will continue from the saved phase.
-
-If you later pull a newer version of this repo and want to re-run the installed services with the same saved config, use:
-
-```bash
-sudo ./install.sh upgrade
-```
-
-`upgrade` re-runs the saved app/service configuration. It does not restart the initial fresh-server bootstrap flow.
-
-If you use `fpush`, keep `/opt/fpush/settings.json` and the APNS `.p12` file it references in place before running `upgrade`. That is what lets the rerun stay non-interactive.
-
-To reset a demo box and try again from a clean local state, run:
-
-```bash
-sudo ./uninstall.sh --yes
-```
-
-That removes the locally installed stack and then prints the manual DNS / PTR cleanup steps you still need to do off-server.
-It removes the installed app stack, not the whole server history. It does not undo general host-hardening changes from `f5m.sh` / `l5m.sh`.
 
 Typical email checkpoints:
 
@@ -134,8 +105,31 @@ sudo ./install.sh doctor
 ```
 
 `verify` checks the local services and health endpoints. `doctor` adds higher-level checks and uses `dig` for DNS checks when it is available.
-For email installs, `doctor` checks not just that MX/PTR records exist, but that MX points at your configured mail domain and PTR points back to the same domain.
-For email installs, `verify` is the immediate local check and `doctor` is the better follow-up after DNS and PTR have propagated.
+For normal installs (without `--no-email`), `doctor` checks not just that MX/PTR records exist, but that MX points at your configured mail domain and PTR points back to the same domain.
+For normal installs (without `--no-email`), `verify` is the immediate local check and `doctor` is the better follow-up after DNS and PTR have propagated.
+
+## Upgrade
+
+If you later pull a newer version of this repo and want to re-run the installed services with the same saved config, use:
+
+```bash
+sudo ./install.sh upgrade
+```
+
+`upgrade` re-runs the saved app/service configuration. It does not restart the install from scratch.
+
+If you use `fpush`, keep `/opt/fpush/settings.json` and the APNS `.p12` file it references in place before running `upgrade`. That is what lets the rerun stay non-interactive.
+
+## Uninstall
+
+To reset a demo box and try again from a clean local state, run:
+
+```bash
+sudo ./uninstall.sh --yes
+```
+
+That removes the locally installed stack and then prints the manual DNS / PTR cleanup steps you still need to do off-server.
+It removes the installed app stack, not the whole server history.
 
 For the full flag list, run:
 
@@ -157,4 +151,4 @@ Most users should only need those readmes for troubleshooting, manual recovery, 
 - mailbox quota is unlimited
 - ejabberd upload limits are large
 - message history is kept by default
-- new email installs require a user-chosen public client token
+- normal installs require a user-chosen public client token

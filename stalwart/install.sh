@@ -92,15 +92,6 @@ bold() { printf "\033[1m%s\033[0m\n" "$*"; }
 info() { printf "• %s\n" "$*"; }
 warn() { printf "\033[33m%s\033[0m\n" "$*"; }
 
-detect_ssh_port() {
-  local ssh_port=""
-  if command -v sshd >/dev/null 2>&1; then
-    ssh_port="$(sshd -T 2>/dev/null | awk '/^port /{print $2; exit}')"
-  fi
-  printf '%s\n' "${ssh_port:-22}"
-}
-
-
 if [[ "${EUID}" -ne 0 ]]; then
   echo "ERROR: run as root" >&2
   exit 1
@@ -118,34 +109,27 @@ if [[ -x /usr/local/bin/erl ]]; then
 fi
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y docker.io curl jq openssl ca-certificates ufw
+apt-get install -y docker.io curl jq openssl ca-certificates
 
 systemctl enable --now docker
 
 if [[ "$SKIP_FIREWALL" == "1" ]]; then
   info "Skipping UFW rule changes because the root wrapper already manages them"
 else
-  if [[ -f /etc/default/ufw ]]; then
-    sed -i 's/^IPV6=.*/IPV6=yes/' /etc/default/ufw || true
+  if ! command -v ufw >/dev/null 2>&1; then
+    info "UFW is not installed; not changing host firewall rules"
+  elif ufw status 2>/dev/null | head -n1 | grep -qi "inactive"; then
+    info "UFW is installed but inactive; not enabling it or changing global policy"
+    info "Open the mail ports yourself if you want to use UFW"
+  else
+    info "UFW is active; adding app-specific mail rules only"
+    ufw allow 25/tcp || true
+    ufw allow 465/tcp || true
+    ufw allow 587/tcp || true
+    ufw allow 993/tcp || true
+    ufw allow 8443/tcp || true
+    ufw reload || true
   fi
-  ufw_active="yes"
-  if ufw status 2>/dev/null | head -n1 | grep -qi "inactive"; then
-    ufw_active="no"
-  fi
-  if [[ "$ufw_active" == "no" ]]; then
-    ufw default deny incoming || true
-    ufw default allow outgoing || true
-  fi
-  ufw allow "$(detect_ssh_port)/tcp" || true
-  ufw allow 25/tcp || true
-  ufw allow 465/tcp || true
-  ufw allow 587/tcp || true
-  ufw allow 993/tcp || true
-  ufw allow 8443/tcp || true
-  if [[ "$ufw_active" == "no" ]]; then
-    ufw --force enable || true
-  fi
-  ufw reload || true
 fi
 
 
