@@ -267,8 +267,8 @@ Off-server uninstall follow-up for ${DOMAIN_HINT}:
 3. Remove the PTR / reverse-DNS record in your hosting provider panel.
 4. If this is a throwaway demo VPS, the cleanest reset is still deleting the server or reverting a snapshot.
 
-Local uninstall is mostly scriptable and should be easy.
-Off-server cleanup is still manual, but usually only a few DNS/PTR deletions.
+Local uninstall is complete.
+Only the off-server DNS and PTR cleanup is still manual.
 EOF
 }
 
