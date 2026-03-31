@@ -93,6 +93,12 @@ fi
 bold() { printf "\033[1m%s\033[0m\n" "$*"; }
 info() { printf "• %s\n" "$*"; }
 warn() { printf "\033[33m%s\033[0m\n" "$*"; }
+write_env_var() {
+  local key="$1"
+  local value="$2"
+  printf '%s=' "$key"
+  printf '%q\n' "$value"
+}
 on_err() {
   local rc=$?
   echo >&2
@@ -247,19 +253,14 @@ if ! domain_exists; then
 Domain "${DOMAIN}" was not found.
 Create it in Webadmin before continuing.
 
-1) On another machine or in another terminal, start an SSH tunnel:
+1) If the existing tunnel/session is gone, reopen Webadmin:
+   - tunnel: ssh -L ${TUNNEL_LOCAL_PORT}:127.0.0.1:${WEBADMIN_REMOTE_PORT} ${STALWART_SSH_USER}@${STALWART_SSH_HOST}
+   - url: http://127.0.0.1:${TUNNEL_LOCAL_PORT}/login
+   - login: admin
+   - password: ${FALLBACK_PASSWORD}
 
-   ssh -L ${TUNNEL_LOCAL_PORT}:127.0.0.1:${WEBADMIN_REMOTE_PORT} ${STALWART_SSH_USER}@${STALWART_SSH_HOST}
-
-2) If you are not already in Webadmin, open:
-   http://127.0.0.1:${TUNNEL_LOCAL_PORT}/login
-
-3) If you are not already logged in, login:
-   Username: admin
-   Password: ${FALLBACK_PASSWORD}
-
-4) Go to: Management → Directory → Domains
-   - Create domain: ${DOMAIN}
+2) In Webadmin, go to: Management → Directory → Domains
+   Create domain: ${DOMAIN}
 
 EOF
 
@@ -278,12 +279,6 @@ fi
 
 glue_token_file="$SECRETS_DIR/glue_api_token.txt"
 
-glue_token_is_valid() {
-  local token="$1"
-  [[ -n "$token" ]] || return 1
-  curl -fsS -H "Authorization: Bearer $token" "$STALWART_API/principal?limit=1" >/dev/null 2>&1
-}
-
 manual_prompt_for_glue_token() {
   bold "MANUAL STEP: Create an Admin API key in Stalwart Webadmin"
   echo
@@ -292,22 +287,17 @@ manual_prompt_for_glue_token() {
 This installer no longer tries to create API keys programmatically.
 You will SSH-tunnel into Stalwart Webadmin, create an API key, then paste it back here.
 
-1) Keep the existing SSH tunnel and Webadmin tab open if you still have them.
-   Otherwise, on another machine or in another terminal, start an SSH tunnel to reach the server-local Webadmin/API:
-
-   ssh -L ${TUNNEL_LOCAL_PORT}:127.0.0.1:${WEBADMIN_REMOTE_PORT} ${STALWART_SSH_USER}@${STALWART_SSH_HOST}
+1) Keep using the existing SSH tunnel and Webadmin session if you still have them.
+   If not, reopen Webadmin:
+   - tunnel: ssh -L ${TUNNEL_LOCAL_PORT}:127.0.0.1:${WEBADMIN_REMOTE_PORT} ${STALWART_SSH_USER}@${STALWART_SSH_HOST}
+   - url: http://127.0.0.1:${TUNNEL_LOCAL_PORT}/login
+   - login: admin
+   - password: ${FALLBACK_PASSWORD}
 
    If STALWART_SSH_HOST is empty, set it and rerun, e.g.:
-     STALWART_SSH_HOST=example.com ./install.sh
+     STALWART_SSH_HOST=example.com bash ./install.sh
 
-2) If you are not already in Webadmin, open:
-   http://127.0.0.1:${TUNNEL_LOCAL_PORT}/login
-
-3) If you are not already logged in, login using the fallback admin credentials created by this installer:
-   Username: admin
-   Password: ${FALLBACK_PASSWORD}
-
-4) In Webadmin, create an API key principal:
+2) In Webadmin, create an API key principal:
    - Navigate to: Management (or Directory) → API Keys  (or Access Control → Principals → API Keys)
    - Click: Create / + / New
    - Type: apiKey
@@ -317,7 +307,7 @@ You will SSH-tunnel into Stalwart Webadmin, create an API key, then paste it bac
    - COPY the secret value shown there before you save changes
    - Save changes
 
-5) Return to this terminal and paste the secret when prompted.
+3) Return to this terminal and paste the secret when prompted.
 
 EOF
 
@@ -333,32 +323,17 @@ EOF
       warn "API key cannot be empty. Try again."
       continue
     fi
-    if ! glue_token_is_valid "$GLUE_API_TOKEN"; then
-      warn "API key validation failed. Check key/permissions, then try again."
-      continue
-    fi
     break
   done
 }
 
 if [[ "$GLUE_API_TOKEN_OVERRIDE_SET" == "1" ]]; then
   GLUE_API_TOKEN="$GLUE_API_TOKEN_OVERRIDE"
-  if ! glue_token_is_valid "$GLUE_API_TOKEN"; then
-    echo "ERROR: --glue-api-token value failed validation against Stalwart API." >&2
-    exit 1
-  fi
   printf "%s\n" "$GLUE_API_TOKEN" > "$glue_token_file"
   chmod 0600 "$glue_token_file"
 elif [[ -s "$glue_token_file" ]]; then
   GLUE_API_TOKEN="$(tr -d '\r\n' < "$glue_token_file")"
-  if glue_token_is_valid "$GLUE_API_TOKEN"; then
-    info "Reusing existing glue API token from $glue_token_file"
-  else
-    warn "Existing glue API token failed validation. Prompting for a new token."
-    manual_prompt_for_glue_token
-    printf "%s\n" "$GLUE_API_TOKEN" > "$glue_token_file"
-    chmod 0600 "$glue_token_file"
-  fi
+  info "Reusing existing glue API token from $glue_token_file"
 else
   manual_prompt_for_glue_token
   printf "%s\n" "$GLUE_API_TOKEN" > "$glue_token_file"
@@ -380,16 +355,14 @@ if [[ "$REQUIRE_PUBLIC_TOKEN" == "1" ]]; then
   fi
 fi
 
-cat > /etc/sysconfig/email-glue <<EOF
-EMAIL_DOMAIN=$DOMAIN
-STALWART_API_TOKEN=$GLUE_API_TOKEN
-EMAIL_GLUE_REQUIRE_CLIENT_TOKEN=$REQUIRE_PUBLIC_TOKEN
-EMAIL_GLUE_DEFAULT_QUOTA_BYTES=0
-EOF
+{
+  write_env_var "EMAIL_DOMAIN" "$DOMAIN"
+  write_env_var "STALWART_API_TOKEN" "$GLUE_API_TOKEN"
+  write_env_var "EMAIL_GLUE_REQUIRE_CLIENT_TOKEN" "$REQUIRE_PUBLIC_TOKEN"
+  write_env_var "EMAIL_GLUE_DEFAULT_QUOTA_BYTES" "0"
+} > /etc/sysconfig/email-glue
 if [[ "$REQUIRE_PUBLIC_TOKEN" == "1" ]]; then
-  cat >> /etc/sysconfig/email-glue <<EOF
-EMAIL_GLUE_CLIENT_TOKEN=$CLIENT_TOKEN
-EOF
+  write_env_var "EMAIL_GLUE_CLIENT_TOKEN" "$CLIENT_TOKEN" >> /etc/sysconfig/email-glue
 fi
 chmod 0600 /etc/sysconfig/email-glue
 
@@ -448,32 +421,31 @@ This installer no longer fetches DNS records programmatically.
 Copy the generated DNS records from Webadmin and paste them into your DNS provider/registrar.
 Webadmin/API runs on server-local port ${WEBADMIN_REMOTE_PORT} (default 8080).
 
-1) Keep using the same SSH tunnel and Webadmin tab if you still have them.
+1) Keep using the same SSH tunnel and Webadmin session if you still have them.
+   If not, reopen Webadmin:
+   - tunnel: ssh -L ${TUNNEL_LOCAL_PORT}:127.0.0.1:${WEBADMIN_REMOTE_PORT} ${STALWART_SSH_USER}@${STALWART_SSH_HOST}
+   - url: http://127.0.0.1:${TUNNEL_LOCAL_PORT}/login
+   - login: admin
+   - password file: ${fallback_pw_file}
 
-2) If you are not already in Webadmin, open:
-   http://127.0.0.1:${TUNNEL_LOCAL_PORT}/login
-
-3) If you are not already logged in, login as admin with the fallback password from:
-   ${fallback_pw_file}
-
-4) Go to: Management → Directory → Domains
+2) Go to: Management → Directory → Domains
    - Ensure the domain "${DOMAIN}" exists.
 
-5) Open the DNS records view for the domain:
+3) Open the DNS records view for the domain:
    - Find "${DOMAIN}" in the list
    - Click the actions menu (⋯ / three dots)
    - Click "DNS Records" / "View DNS records"
 
-6) Start with the required mail records:
+4) Start with the required mail records:
    - MX record(s)
    - DKIM TXT record(s) at <selector>._domainkey.${DOMAIN}
    - DMARC TXT record at _dmarc.${DOMAIN}
    - the SPF TXT record for ${DOMAIN}
 
-7) For this guided setup, use ${DOMAIN} itself as the mail host.
+5) For this guided setup, use ${DOMAIN} itself as the mail host.
    If Webadmin also shows records for mail.${DOMAIN}, you can skip those unless you intentionally want MX to point at mail.${DOMAIN} instead of ${DOMAIN}.
 
-8) Optional records can be added later if you want them:
+6) Optional records can be added later if you want them:
    - TLSA / DANE
    - SRV / autoconfig / autodiscover
    - MTA-STS, TLS-RPT, and similar convenience/security records

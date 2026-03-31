@@ -681,29 +681,29 @@ run_dns_checkpoint() {
   cat <<EOF
 
 DNS step:
-1. Keep the existing Stalwart SSH tunnel and browser tab open if you still have them.
-2. If you are not already in Webadmin, open:
-   http://127.0.0.1:${TUNNEL_LOCAL_PORT}/login
-3. If you are not already logged in, login with:
-   Username: admin
-   Password command: sudo cat /root/stalwart-secrets/fallback_admin_password.txt
-4. Go to: Management -> Directory -> Domains -> ${DOMAIN} -> DNS Records
-5. In your DNS provider, start with the required records from that page:
+1. Keep using the same Stalwart SSH tunnel and Webadmin session if you still have them.
+   If not:
+   - tunnel: ssh -L ${TUNNEL_LOCAL_PORT}:127.0.0.1:${WEBADMIN_REMOTE_PORT} ${STALWART_SSH_USER}@${STALWART_SSH_HOST}
+   - url: http://127.0.0.1:${TUNNEL_LOCAL_PORT}/login
+   - login: admin
+   - password command: sudo cat /root/stalwart-secrets/fallback_admin_password.txt
+2. In Webadmin, go to: Management -> Directory -> Domains -> ${DOMAIN} -> DNS Records
+3. In your DNS provider, start with the required records from that page:
    - MX
    - DKIM
    - DMARC
    - the SPF TXT record for ${DOMAIN}
-6. For this guided setup, use ${DOMAIN} itself as the mail host.
+4. For this guided setup, use ${DOMAIN} itself as the mail host.
    If Webadmin also shows records for mail.${DOMAIN}, you can skip those unless you intentionally want MX to point at mail.${DOMAIN} instead of ${DOMAIN}.
-7. Optional records can be added later:
+5. Optional records can be added later:
    - TLSA / DANE
    - SRV / autoconfig / autodiscover
    - MTA-STS, TLS-RPT, and similar convenience/security records
-8. SPF rule: publish at most one SPF TXT record per hostname.
+6. SPF rule: publish at most one SPF TXT record per hostname.
    The required one for this guided setup is the SPF TXT for ${DOMAIN} itself.
    If Webadmin shows multiple SPF TXT rows for the same hostname, merge their mechanisms into one SPF TXT record instead of publishing them separately.
    Example: combine 'v=spf1 a ra=postmaster -all' and 'v=spf1 mx ra=postmaster -all' into 'v=spf1 a mx ra=postmaster -all'.
-9. Use the names and values exactly as shown for any record you choose to publish, except for same-hostname SPF rows, which must be merged into one SPF TXT record.
+7. Use the names and values exactly as shown for any record you choose to publish, except for same-hostname SPF rows, which must be merged into one SPF TXT record.
 
 When you have saved the DNS records in your DNS provider, come back here.
 EOF
@@ -743,9 +743,29 @@ finalize_install() {
   save_state
   section "Done"
   info "Install flow is complete"
-  info "Run: sudo bash ./install.sh verify"
+  cat <<EOF
+
+Next:
+1. Run:
+   sudo bash ./install.sh verify
+2. Run:
+   sudo bash ./install.sh doctor
+EOF
   if [[ "$NO_EMAIL" == "0" ]]; then
-    info "After DNS and PTR have propagated, run: sudo bash ./install.sh doctor"
+    info "For normal installs, doctor is most useful after DNS and PTR have propagated"
+  fi
+  if [[ "$NO_EMAIL" == "0" ]]; then
+    cat <<EOF
+
+To start using your server in Axichat:
+1. Open the sign up screen.
+2. In the username field, tap the @axi.im button.
+3. Enter your domain:
+   ${DOMAIN}
+4. Enter your public token:
+   ${PUBLIC_TOKEN}
+5. Finish sign up to start using your server.
+EOF
   fi
   info "Saved config: ${CONFIG_FILE}"
   info "Saved state:  ${STATE_JSON}"
@@ -821,7 +841,7 @@ continue_install_from_state() {
       ;;
     complete)
       info "Install is already complete"
-      info "Run: sudo bash ./install.sh verify"
+      finalize_install
       ;;
     *)
       die "cannot continue from phase ${CURRENT_PHASE}"
