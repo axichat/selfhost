@@ -1,12 +1,26 @@
-![Axichat banner](assets/axichat_banner.png)
+![Axichat banner](https://axichat.github.io/axichat/readme-media/axichat_banner.png)
 
 * * *
 
+<p>
+  <a href="https://youtu.be/szR-YuDeMOM">
+    <img
+      src="https://img.youtube.com/vi/szR-YuDeMOM/hqdefault.jpg"
+      alt="Watch the Axichat self-host tutorial on YouTube"
+      width="720"
+    />
+  </a>
+</p>
+
+[Watch the self-host tutorial on YouTube](https://youtu.be/szR-YuDeMOM) · [Open a GitHub issue](https://github.com/axichat/selfhost/issues/new) · [Email voucher@axi.chat](mailto:voucher@axi.chat)
+
+Netcup is a great VPS provider and one of the few that allows email hosting. Open a [GitHub issue](https://github.com/axichat/selfhost/issues/new) in this repo, or email [voucher@axi.chat](mailto:voucher@axi.chat) with the Netcup product you want, so we can generate you a free voucher for that server. Use it at checkout for a discount and to help us pay for our servers.
+
 # Self-Hosting Quick Start
 
-This directory installs the Axichat self-host stack on your (Debian) server.
+This directory installs the Axichat self-host stack on your Debian server.
 
-The public entrypoint is the root [`install.sh`](install.sh).
+The main entry point is [`install.sh`](install.sh) in the repo root.
 You should not need prior ejabberd or Stalwart knowledge; the script pauses and tells you exactly what to do.
 [`ejabberd/README.md`](ejabberd/README.md) and [`stalwart/README.md`](stalwart/README.md) are advanced/manual documents for troubleshooting.
 
@@ -78,7 +92,7 @@ ssh root@YOUR_SERVER_IP
 cd ~/selfhost
 ```
 
-2. Choose one of these entrypoints.
+2. Choose one of these entry points.
 
 If you want all capabilities (chat and email):
 
@@ -88,7 +102,7 @@ sudo bash ./install.sh install --domain example.com --public-token your-shared-t
 
 Choose your own public token. Everyone that uses your server will need to enter it into their Axichat clients, so it should be something you can remember and distribute. It is not a secret.
 
-If you do NOT want email:
+If you do not want email:
 
 ```bash
 sudo bash ./install.sh install --domain example.com --no-email
@@ -96,7 +110,7 @@ sudo bash ./install.sh install --domain example.com --no-email
 
 3. Follow the guided checkpoints.
 
-When the installer needs something off-server, it prints the exact steps and then waits for you in the same terminal. In the normal flow, you do not need to open the component readmes.
+When the installer needs something off-server, it prints the exact steps and then waits for you in the same terminal. In the normal flow, you do not need to open the component READMEs.
 If the script gets interrupted, rerun the same `install` command and it will continue from the saved phase.
 
 Typical email checkpoints:
@@ -155,12 +169,12 @@ bash ./uninstall.sh help
 
 If you rerun the same `install` command after an interruption, the wrapper continues from the saved phase instead of starting over.
 
-## Component Readmes
+## Component READMEs
 
 - [`ejabberd/README.md`](ejabberd/README.md): advanced/manual ejabberd path, fpush notes, and ejabberd-specific prompts
 - [`stalwart/README.md`](stalwart/README.md): advanced/manual Stalwart path, Webadmin/API-key flow, direct script flags, and email-specific verification
 
-Most users should only need those readmes for troubleshooting, manual recovery, or direct component debugging.
+Most users should only need those READMEs for troubleshooting, manual recovery, or direct component debugging.
 
 ## Defaults
 
