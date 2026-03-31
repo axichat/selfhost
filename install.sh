@@ -68,7 +68,7 @@ Install options:
   --turn-public-ip IP             Pre-answer the ejabberd installer TURN IP prompt.
   --stalwart-ssh-host HOST        Host shown in the Webadmin tunnel instructions.
   --stalwart-ssh-user USER        SSH user shown in the Webadmin tunnel instructions.
-  --tunnel-local-port PORT        Local laptop port used in SSH tunnel instructions.
+  --tunnel-local-port PORT        Local port used in SSH tunnel instructions.
   --webadmin-remote-port PORT     Server-local Stalwart Webadmin port. Default: 8080.
 EOF
 }
@@ -681,15 +681,29 @@ run_dns_checkpoint() {
   cat <<EOF
 
 DNS step:
-1. Keep the Stalwart SSH tunnel available from your laptop.
-2. Open:
+1. Keep the existing Stalwart SSH tunnel and browser tab open if you still have them.
+2. If you are not already in Webadmin, open:
    http://127.0.0.1:${TUNNEL_LOCAL_PORT}/login
-3. Login with:
+3. If you are not already logged in, login with:
    Username: admin
    Password command: sudo cat /root/stalwart-secrets/fallback_admin_password.txt
 4. Go to: Management -> Directory -> Domains -> ${DOMAIN} -> DNS Records
-5. In your DNS provider, create every record Stalwart shows there.
-   Use the names and values exactly as shown.
+5. In your DNS provider, start with the required records from that page:
+   - MX
+   - DKIM
+   - DMARC
+   - the SPF TXT record for ${DOMAIN}
+6. For this guided setup, use ${DOMAIN} itself as the mail host.
+   If Webadmin also shows records for mail.${DOMAIN}, you can skip those unless you intentionally want MX to point at mail.${DOMAIN} instead of ${DOMAIN}.
+7. Optional records can be added later:
+   - TLSA / DANE
+   - SRV / autoconfig / autodiscover
+   - MTA-STS, TLS-RPT, and similar convenience/security records
+8. SPF rule: publish at most one SPF TXT record per hostname.
+   The required one for this guided setup is the SPF TXT for ${DOMAIN} itself.
+   If Webadmin shows multiple SPF TXT rows for the same hostname, merge their mechanisms into one SPF TXT record instead of publishing them separately.
+   Example: combine `v=spf1 a ra=postmaster -all` and `v=spf1 mx ra=postmaster -all` into `v=spf1 a mx ra=postmaster -all`.
+9. Use the names and values exactly as shown for any record you choose to publish, except for same-hostname SPF rows, which must be merged into one SPF TXT record.
 
 When you have saved the DNS records in your DNS provider, come back here.
 EOF

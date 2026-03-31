@@ -113,15 +113,41 @@ There are two different tokens in this setup:
 If you need to create the glue API token manually, do this:
 
 1. Run the installer until it prints the SSH tunnel command.
-2. From your laptop, start the tunnel it shows.
-3. Open `http://127.0.0.1:18080/login` or the tunneled port it printed.
-4. Login as `admin` with the fallback password the installer printed or stored in `/root/stalwart-secrets/fallback_admin_password.txt`.
+2. From another machine or in another terminal, start the tunnel it shows, or keep using the existing tunnel if it is still open.
+3. If you are not already in Webadmin, open `http://127.0.0.1:18080/login` or the tunneled port it printed.
+4. If you are not already logged in, login as `admin` with the fallback password the installer printed or stored in `/root/stalwart-secrets/fallback_admin_password.txt`.
 5. Create an API key principal with these values:
    - Type: `apiKey`
    - Name: `email-glue`
    - Roles: `admin`
-6. Generate and copy the secret value.
-7. Either paste that secret when the installer prompts, or rerun with `--glue-api-token=TOKEN`.
+6. Open the `Authentication` tab and copy the secret value shown there before you save changes. It will not be shown again afterward.
+7. Save changes.
+8. Either paste that secret when the installer prompts, or rerun with `--glue-api-token=TOKEN`.
+
+## DNS records from Webadmin
+
+For the normal guided setup, use `DOMAIN` itself as the mail host. You do not need `mail.DOMAIN` records unless you intentionally want MX to point there instead.
+
+Start with the required mail records:
+
+- MX
+- DKIM
+- DMARC
+- the SPF TXT record for `DOMAIN` itself
+
+Optional records can be added later:
+
+- TLSA / DANE
+- SRV / autoconfig / autodiscover
+- MTA-STS, TLS-RPT, and similar convenience/security records
+
+SPF rule:
+
+- publish at most one SPF TXT record per hostname
+- the one you should always publish first is the SPF TXT for `DOMAIN` itself
+- if Stalwart shows multiple SPF TXT rows for the same hostname, merge them into one SPF TXT record
+- example: merge `v=spf1 a ra=postmaster -all` and `v=spf1 mx ra=postmaster -all` into `v=spf1 a mx ra=postmaster -all`
+- only add another SPF TXT if it is for a different hostname that you intentionally use
 
 ## Installer environment overrides
 
@@ -136,7 +162,7 @@ These affect the Webadmin tunnel instructions printed by `install.sh`:
   Default: `root`
 
 - `TUNNEL_LOCAL_PORT`
-  Local port on your laptop used in the tunnel instructions.
+  Local port used in the tunnel instructions.
   Default: `18080`
 
 - `WEBADMIN_REMOTE_PORT`

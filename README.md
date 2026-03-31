@@ -97,6 +97,8 @@ Typical email checkpoints:
 - copy DNS records from Webadmin into your DNS provider
 - configure PTR / reverse DNS in your hosting provider panel
 
+For the normal guided setup, use your apex domain itself as the mail host. You do not need `mail.example.com` records unless you intentionally want a separate mail hostname.
+
 ## Verify
 
 ```bash

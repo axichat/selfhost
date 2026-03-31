@@ -87,7 +87,7 @@ fi
 # ---- Manual Webadmin interaction settings (override via env) ----
 : "${STALWART_SSH_HOST:=$DOMAIN}" # hostname or IP you ssh into (for tunnel instructions)
 : "${STALWART_SSH_USER:=root}"    # ssh user for tunnel instructions
-: "${TUNNEL_LOCAL_PORT:=18080}"   # local port on your laptop
+: "${TUNNEL_LOCAL_PORT:=18080}"   # local port on the machine where you open the tunnel
 : "${WEBADMIN_REMOTE_PORT:=8080}" # Stalwart Webadmin/API port on the server (localhost)
 
 bold() { printf "\033[1m%s\033[0m\n" "$*"; }
@@ -247,14 +247,14 @@ if ! domain_exists; then
 Domain "${DOMAIN}" was not found.
 Create it in Webadmin before continuing.
 
-1) On YOUR LAPTOP, start an SSH tunnel:
+1) On another machine or in another terminal, start an SSH tunnel:
 
    ssh -L ${TUNNEL_LOCAL_PORT}:127.0.0.1:${WEBADMIN_REMOTE_PORT} ${STALWART_SSH_USER}@${STALWART_SSH_HOST}
 
-2) Open Webadmin:
+2) If you are not already in Webadmin, open:
    http://127.0.0.1:${TUNNEL_LOCAL_PORT}/login
 
-3) Login:
+3) If you are not already logged in, login:
    Username: admin
    Password: ${FALLBACK_PASSWORD}
 
@@ -292,17 +292,18 @@ manual_prompt_for_glue_token() {
 This installer no longer tries to create API keys programmatically.
 You will SSH-tunnel into Stalwart Webadmin, create an API key, then paste it back here.
 
-1) On YOUR LAPTOP, start an SSH tunnel to reach the server-local Webadmin/API:
+1) Keep the existing SSH tunnel and Webadmin tab open if you still have them.
+   Otherwise, on another machine or in another terminal, start an SSH tunnel to reach the server-local Webadmin/API:
 
    ssh -L ${TUNNEL_LOCAL_PORT}:127.0.0.1:${WEBADMIN_REMOTE_PORT} ${STALWART_SSH_USER}@${STALWART_SSH_HOST}
 
    If STALWART_SSH_HOST is empty, set it and rerun, e.g.:
-     STALWART_SSH_HOST=mail.example.com STALWART_SSH_USER=ubuntu ./install.sh
+     STALWART_SSH_HOST=example.com ./install.sh
 
-2) Open Webadmin in your browser (via the tunnel):
+2) If you are not already in Webadmin, open:
    http://127.0.0.1:${TUNNEL_LOCAL_PORT}/login
 
-3) Login using the fallback admin credentials created by this installer:
+3) If you are not already logged in, login using the fallback admin credentials created by this installer:
    Username: admin
    Password: ${FALLBACK_PASSWORD}
 
@@ -312,8 +313,9 @@ You will SSH-tunnel into Stalwart Webadmin, create an API key, then paste it bac
    - Type: apiKey
    - Name: email-glue
    - Roles: admin  (fastest; you can reduce permissions later)
-   - Secrets: click Add/Generate secret, then COPY the secret value
-   - Save
+   - Open the Authentication tab
+   - COPY the secret value shown there before you save changes
+   - Save changes
 
 5) Return to this terminal and paste the secret when prompted.
 
@@ -446,27 +448,43 @@ This installer no longer fetches DNS records programmatically.
 Copy the generated DNS records from Webadmin and paste them into your DNS provider/registrar.
 Webadmin/API runs on server-local port ${WEBADMIN_REMOTE_PORT} (default 8080).
 
-1) In Webadmin (same tunnel as above):
+1) Keep using the same SSH tunnel and Webadmin tab if you still have them.
+
+2) If you are not already in Webadmin, open:
    http://127.0.0.1:${TUNNEL_LOCAL_PORT}/login
 
-2) Go to: Management → Directory → Domains
+3) If you are not already logged in, login as `admin` with the fallback password from:
+   ${fallback_pw_file}
+
+4) Go to: Management → Directory → Domains
    - Ensure the domain "${DOMAIN}" exists.
 
-3) Open the DNS records view for the domain:
+5) Open the DNS records view for the domain:
    - Find "${DOMAIN}" in the list
    - Click the actions menu (⋯ / three dots)
    - Click "DNS Records" / "View DNS records"
 
-4) Add the records shown at your DNS provider. Typically this includes:
+6) Start with the required mail records:
    - MX record(s)
-   - SPF TXT record (v=spf1 …)
-   - DMARC TXT record at _dmarc.${DOMAIN}
    - DKIM TXT record(s) at <selector>._domainkey.${DOMAIN}
-   - Any other records shown (SRV, MTA-STS, TLS-RPT, etc. if enabled)
+   - DMARC TXT record at _dmarc.${DOMAIN}
+   - the SPF TXT record for ${DOMAIN}
+
+7) For this guided setup, use ${DOMAIN} itself as the mail host.
+   If Webadmin also shows records for mail.${DOMAIN}, you can skip those unless you intentionally want MX to point at mail.${DOMAIN} instead of ${DOMAIN}.
+
+8) Optional records can be added later if you want them:
+   - TLSA / DANE
+   - SRV / autoconfig / autodiscover
+   - MTA-STS, TLS-RPT, and similar convenience/security records
 
 Notes:
 • If you already have SPF/DMARC/DKIM, MERGE carefully instead of overwriting.
 • SPF must be a single TXT record per hostname.
+• The required one for this guided setup is the SPF TXT record for ${DOMAIN} itself.
+• If Stalwart shows multiple SPF TXT rows for the same hostname, merge them into one SPF TXT record instead of publishing them separately.
+• Example: merge `v=spf1 a ra=postmaster -all` and `v=spf1 mx ra=postmaster -all` into `v=spf1 a mx ra=postmaster -all`.
+• Only add another SPF TXT if it is for a different hostname that you intentionally use.
 
 EOF
 fi
