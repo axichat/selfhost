@@ -58,6 +58,9 @@ On the server, run:
 
 ```bash
 curl -L https://gitlab.com/axichat/selfhost/-/archive/main/selfhost-main.tar.gz | tar -xzf -
+```
+
+```bash
 cd selfhost-main
 ```
 
@@ -65,7 +68,13 @@ If you already have the repo on your laptop and want to upload it manually inste
 
 ```bash
 scp -r ./selfhost root@YOUR_SERVER_IP:~
+```
+
+```bash
 ssh root@YOUR_SERVER_IP
+```
+
+```bash
 cd ~/selfhost
 ```
 
@@ -103,6 +112,9 @@ For the normal guided setup, use your apex domain itself as the mail host. You d
 
 ```bash
 sudo bash ./install.sh verify
+```
+
+```bash
 sudo bash ./install.sh doctor
 ```
 
