@@ -2,7 +2,7 @@
 
 * * *
 
-<p>
+<p align="center">
   <a href="https://youtu.be/szR-YuDeMOM">
     <img
       src="https://img.youtube.com/vi/szR-YuDeMOM/hqdefault.jpg"
@@ -12,9 +12,11 @@
   </a>
 </p>
 
-[Watch the self-host tutorial on YouTube](https://youtu.be/szR-YuDeMOM) · [Open a GitHub issue](https://github.com/axichat/selfhost/issues/new) · [Email voucher@axi.chat](mailto:voucher@axi.chat)
-
-Netcup is a great VPS provider and one of the few that allows email hosting. Open a [GitHub issue](https://github.com/axichat/selfhost/issues/new) in this repo, or email [voucher@axi.chat](mailto:voucher@axi.chat) with the Netcup product you want, so we can generate you a free voucher for that server. Use it at checkout for a discount and to help us pay for our servers.
+<p align="center">
+  <sub>
+    Netcup is a great VPS provider and one of the few that allows email hosting. Open a <a href="https://github.com/axichat/selfhost/issues/new">GitHub issue</a> in this repo, or email <code>voucher@axi.chat</code> with the Netcup product you want, so we can generate you a free voucher for that server. Use it at checkout for a discount and to help us pay for our servers.
+  </sub>
+</p>
 
 # Self-Hosting Quick Start
 
