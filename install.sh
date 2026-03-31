@@ -702,7 +702,7 @@ DNS step:
 8. SPF rule: publish at most one SPF TXT record per hostname.
    The required one for this guided setup is the SPF TXT for ${DOMAIN} itself.
    If Webadmin shows multiple SPF TXT rows for the same hostname, merge their mechanisms into one SPF TXT record instead of publishing them separately.
-   Example: combine `v=spf1 a ra=postmaster -all` and `v=spf1 mx ra=postmaster -all` into `v=spf1 a mx ra=postmaster -all`.
+   Example: combine 'v=spf1 a ra=postmaster -all' and 'v=spf1 mx ra=postmaster -all' into 'v=spf1 a mx ra=postmaster -all'.
 9. Use the names and values exactly as shown for any record you choose to publish, except for same-hostname SPF rows, which must be merged into one SPF TXT record.
 
 When you have saved the DNS records in your DNS provider, come back here.

@@ -453,7 +453,7 @@ Webadmin/API runs on server-local port ${WEBADMIN_REMOTE_PORT} (default 8080).
 2) If you are not already in Webadmin, open:
    http://127.0.0.1:${TUNNEL_LOCAL_PORT}/login
 
-3) If you are not already logged in, login as `admin` with the fallback password from:
+3) If you are not already logged in, login as admin with the fallback password from:
    ${fallback_pw_file}
 
 4) Go to: Management → Directory → Domains
@@ -483,7 +483,7 @@ Notes:
 • SPF must be a single TXT record per hostname.
 • The required one for this guided setup is the SPF TXT record for ${DOMAIN} itself.
 • If Stalwart shows multiple SPF TXT rows for the same hostname, merge them into one SPF TXT record instead of publishing them separately.
-• Example: merge `v=spf1 a ra=postmaster -all` and `v=spf1 mx ra=postmaster -all` into `v=spf1 a mx ra=postmaster -all`.
+• Example: merge 'v=spf1 a ra=postmaster -all' and 'v=spf1 mx ra=postmaster -all' into 'v=spf1 a mx ra=postmaster -all'.
 • Only add another SPF TXT if it is for a different hostname that you intentionally use.
 
 EOF
