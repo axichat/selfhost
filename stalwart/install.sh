@@ -239,11 +239,46 @@ done
 
 basic="admin:${FALLBACK_PASSWORD}"
 
+wait_for_stalwart_ready() {
+  local i
+  for i in $(seq 1 60); do
+    if curl -fsS "$HTTP_READY" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+ensure_stalwart_ready() {
+  if wait_for_stalwart_ready; then
+    return 0
+  fi
+
+  warn "Stalwart Webadmin is not responding on ${HTTP_READY}. Trying to restart it."
+  systemctl restart stalwart.service >>"$INSTALL_LOG" 2>&1 || {
+    echo "ERROR: failed to restart stalwart.service. Full log: ${INSTALL_LOG}" >&2
+    journalctl -u stalwart.service --no-pager -n 200 >&2 || true
+    exit 1
+  }
+
+  if wait_for_stalwart_ready; then
+    info "Stalwart Webadmin is responding again"
+    return 0
+  fi
+
+  echo "ERROR: Stalwart still is not ready on ${HTTP_READY} after restart." >&2
+  journalctl -u stalwart.service --no-pager -n 200 >&2 || true
+  exit 1
+}
+
 domain_exists() {
   local domain_id
   domain_id="$(curl -fsS -u "$basic" "$STALWART_API/principal?types=domain&limit=1000" | jq -r --arg dom "$DOMAIN" '.data.items[]? | select(.name==$dom) | .id' | head -n1)"
   [[ -n "$domain_id" && "$domain_id" != "null" ]]
 }
+
+ensure_stalwart_ready
 
 if ! domain_exists; then
   bold "MANUAL STEP: Create the domain in Stalwart Webadmin"
@@ -268,8 +303,11 @@ EOF
     warn "STALWART_SSH_HOST is not set. The tunnel command above will not work until you set it."
   fi
 
+  ensure_stalwart_ready
+
   while true; do
     read -r -p "Press Enter after creating domain ${DOMAIN} in Webadmin..." _
+    ensure_stalwart_ready
     if domain_exists; then
       break
     fi
@@ -314,6 +352,8 @@ EOF
   if [[ -z "${STALWART_SSH_HOST}" ]]; then
     warn "STALWART_SSH_HOST is not set. The tunnel command above will not work until you set it."
   fi
+
+  ensure_stalwart_ready
 
   while true; do
     echo
