@@ -12,6 +12,9 @@ ASSUME_YES="0"
 PURGE_EJABBERD_PACKAGE="1"
 DOMAIN_HINT="example.com"
 LOCK_FD=""
+EJABBERD_ACME_DIR="/var/lib/ejabberd/acme"
+EJABBERD_ACME_BACKUP_DIR="/var/lib/axichat-selfhost-preserved/ejabberd-acme"
+CERTS_MODE="ask"
 
 info() { printf '• %s\n' "$*"; }
 warn() { printf 'WARN: %s\n' "$*" >&2; }
@@ -26,10 +29,13 @@ Default behavior:
   - stops and removes the Axichat self-host services
   - deletes the local app data, secrets, units, and wrapper state
   - removes the ejabberd port-80 forwarder service and any old redirect block this repo added
+  - asks whether to purge ejabberd ACME account/certificate state
   - purges the ejabberd package so the next demo attempt starts cleanly
 
 Options:
   --yes                    Do not ask for confirmation.
+  --purge-certs            Also remove ejabberd ACME account/certificate state.
+  --keep-certs             Preserve ejabberd ACME account/certificate state without asking.
   --keep-ejabberd-package  Keep the ejabberd package installed.
   -h, --help               Show this help.
 EOF
@@ -67,6 +73,14 @@ parse_args() {
         PURGE_EJABBERD_PACKAGE="0"
         shift
         ;;
+      --purge-certs)
+        CERTS_MODE="purge"
+        shift
+        ;;
+      --keep-certs)
+        CERTS_MODE="keep"
+        shift
+        ;;
       -h|--help)
         usage
         exit 0
@@ -95,6 +109,12 @@ confirm_teardown() {
 This will remove the local Axichat self-host install for ${DOMAIN_HINT}:
   - ejabberd, Stalwart, email-glue, and fpush services
   - local app data, secrets, wrapper config/state, and the ejabberd port-80 forwarder this repo added
+  - ejabberd ACME account/certificate state at ${EJABBERD_ACME_DIR}$(
+      case "$CERTS_MODE" in
+        purge) printf ' (will be removed)' ;;
+        keep) printf ' (will be preserved)' ;;
+        *) printf ' (you will be asked)' ;;
+      esac)
   - the ejabberd package itself$([[ "$PURGE_EJABBERD_PACKAGE" == "1" ]] && printf '' || printf ' (kept installed)')
 
 This does NOT:
@@ -108,6 +128,34 @@ EOF
   read -r -p "Continue with uninstall? [y/N]: " answer || true
   answer="$(printf '%s' "${answer:-}" | tr '[:upper:]' '[:lower:]')"
   [[ "$answer" == "y" || "$answer" == "yes" ]] || die "uninstall cancelled"
+}
+
+decide_cert_cleanup() {
+  if [[ "$CERTS_MODE" == "purge" || "$CERTS_MODE" == "keep" ]]; then
+    return
+  fi
+
+  if [[ ! -d "$EJABBERD_ACME_DIR" ]]; then
+    CERTS_MODE="purge"
+    return
+  fi
+
+  cat <<EOF
+ejabberd ACME account/certificate state was found at:
+  ${EJABBERD_ACME_DIR}
+
+Choose yes only if you really want a full certificate cleanup.
+Choose no if you want future demo reruns to reuse the existing ACME state and avoid new TLS issuance.
+EOF
+
+  local answer
+  read -r -p "Purge ejabberd ACME certificate/account state too? [y/N]: " answer || true
+  answer="$(printf '%s' "${answer:-}" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$answer" == "y" || "$answer" == "yes" ]]; then
+    CERTS_MODE="purge"
+  else
+    CERTS_MODE="keep"
+  fi
 }
 
 stop_disable_unit() {
@@ -232,6 +280,34 @@ teardown_data() {
   fi
 }
 
+backup_ejabberd_acme_state() {
+  if [[ "$CERTS_MODE" != "keep" ]]; then
+    remove_dir_if_present "$EJABBERD_ACME_BACKUP_DIR"
+    return 0
+  fi
+
+  if [[ ! -d "$EJABBERD_ACME_DIR" ]]; then
+    remove_dir_if_present "$EJABBERD_ACME_BACKUP_DIR"
+    return 0
+  fi
+
+  info "Preserving ejabberd ACME account/certificate state"
+  remove_dir_if_present "$EJABBERD_ACME_BACKUP_DIR"
+  mkdir -p "$(dirname "$EJABBERD_ACME_BACKUP_DIR")"
+  cp -a "$EJABBERD_ACME_DIR" "$EJABBERD_ACME_BACKUP_DIR"
+}
+
+restore_ejabberd_acme_state() {
+  [[ "$CERTS_MODE" == "keep" ]] || return 0
+  [[ -d "$EJABBERD_ACME_BACKUP_DIR" ]] || return 0
+
+  info "Restoring ejabberd ACME account/certificate state"
+  mkdir -p "$(dirname "$EJABBERD_ACME_DIR")"
+  rm -rf "$EJABBERD_ACME_DIR"
+  cp -a "$EJABBERD_ACME_BACKUP_DIR" "$EJABBERD_ACME_DIR"
+  remove_dir_if_present "$EJABBERD_ACME_BACKUP_DIR"
+}
+
 teardown_ejabberd_package() {
   if [[ "$PURGE_EJABBERD_PACKAGE" != "1" ]]; then
     info "Keeping the ejabberd package installed"
@@ -278,11 +354,14 @@ main() {
   acquire_install_lock
   load_saved_domain_hint
   confirm_teardown
+  decide_cert_cleanup
 
   teardown_services
+  backup_ejabberd_acme_state
   teardown_systemd_units
   teardown_data
   teardown_ejabberd_package
+  restore_ejabberd_acme_state
   teardown_firewall
 
   info "Local uninstall is complete"

@@ -143,12 +143,14 @@ sudo bash ./uninstall.sh --yes
 ```
 
 That removes the locally installed stack and then prints the manual DNS / PTR cleanup steps you still need to do off-server.
-It removes the installed app stack, not the whole server history.
+It removes the installed app stack, not the whole server history. By default it asks whether to purge ejabberd ACME certificate state.
+Choose no if you want demo reruns to reuse the existing ACME state and avoid new TLS issuance.
+Choose yes, or pass `--purge-certs`, if you want full certificate cleanup.
 
 For the full flag list, run:
 
 ```bash
-bash ./install.sh help
+bash ./uninstall.sh help
 ```
 
 If you rerun the same `install` command after an interruption, the wrapper continues from the saved phase instead of starting over.

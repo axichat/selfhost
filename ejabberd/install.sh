@@ -419,7 +419,10 @@ fi
 echo
 echo "== Certificate selection for ${DOMAIN} =="
 if ! "$EJABBERDCTL" list-certificates | awk -v d="${DOMAIN}" '$1==d{print; found=1} END{if(!found) exit 1}'; then
-  echo "WARNING: No certificate is currently listed for ${DOMAIN}."
+  die "No TLS certificate is currently listed for ${DOMAIN}.
+
+The install cannot continue without a working ejabberd certificate because Stalwart reuses it.
+If ACME was rate-limited or port 80 was not reachable, fix that first and rerun the installer."
 fi
 
 echo
