@@ -7,6 +7,8 @@ STATE_DIR="${AXICHAT_SELFHOST_STATE_DIR:-/var/lib/axichat-selfhost}"
 STATE_FILE="${STATE_DIR}/state.env"
 STATE_JSON="${STATE_DIR}/state.json"
 LOCK_FILE="${AXICHAT_SELFHOST_LOCK_FILE:-/run/lock/axichat-selfhost.lock}"
+EMAIL_GLUE_ENV_FILE="/etc/sysconfig/email-glue"
+CLIENT_TOKEN_FILE="/root/stalwart-secrets/client_token.txt"
 
 SCHEMA_VERSION=1
 CURRENT_PHASE=""
@@ -46,6 +48,8 @@ Usage:
   sudo bash ./install.sh install --domain example.com --public-token YOUR_TOKEN [options]
   sudo bash ./install.sh install --domain example.com --no-email [options]
   sudo bash ./install.sh upgrade
+  sudo bash ./install.sh public-token show
+  sudo bash ./install.sh public-token set NEW_TOKEN
   sudo bash ./install.sh doctor
   sudo bash ./install.sh verify
   sudo bash ./install.sh help
@@ -53,6 +57,7 @@ Usage:
 Most people want one of these:
   sudo bash ./install.sh install --domain example.com --public-token YOUR_TOKEN
   sudo bash ./install.sh install --domain example.com --no-email
+  sudo bash ./install.sh public-token show
 
 If the installer pauses for a browser / DNS / hosting-provider step, keep it
 open and follow the instructions it prints. If it gets interrupted, rerun the
@@ -109,6 +114,13 @@ json_escape() {
 }
 
 write_shell_var() {
+  local key="$1"
+  local value="$2"
+  printf '%s=' "$key"
+  printf '%q\n' "$value"
+}
+
+write_env_var() {
   local key="$1"
   local value="$2"
   printf '%s=' "$key"
@@ -229,6 +241,48 @@ load_config() {
   [[ -f "$CONFIG_FILE" ]] || die "no config file at ${CONFIG_FILE}; run install first"
   # shellcheck disable=SC1090
   source "$CONFIG_FILE"
+}
+
+validate_public_token_value() {
+  local token="$1"
+  [[ -n "$token" ]] || die "public token cannot be empty"
+  [[ "$token" != *$'\n'* ]] || die "public token must be single-line"
+  if [[ "$token" =~ [[:space:]] ]]; then
+    warn "the public token contains whitespace; users will need to type it exactly"
+  fi
+}
+
+upsert_env_var_file() {
+  local file="$1"
+  local key="$2"
+  local value="$3"
+  local tmp
+  local found=0
+  local line
+
+  tmp="$(mktemp)"
+  if [[ -f "$file" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      if [[ "$line" == "${key}="* ]]; then
+        write_env_var "$key" "$value" >>"$tmp"
+        found=1
+      else
+        printf '%s\n' "$line" >>"$tmp"
+      fi
+    done <"$file"
+  fi
+
+  if [[ "$found" == "0" ]]; then
+    write_env_var "$key" "$value" >>"$tmp"
+  fi
+
+  chmod 0600 "$tmp"
+  mv "$tmp" "$file"
+  chmod 0600 "$file"
+}
+
+email_glue_service_installed() {
+  systemctl list-unit-files email-glue.service --no-legend 2>/dev/null | grep -q '^email-glue\.service'
 }
 
 saved_install_exists() {
@@ -765,6 +819,10 @@ To start using your server in Axichat:
 4. Enter your public token:
    ${PUBLIC_TOKEN}
 5. Finish sign up to start using your server.
+
+Later:
+- show it again: sudo bash ./install.sh public-token show
+- change it:     sudo bash ./install.sh public-token set NEW_TOKEN
 EOF
   fi
   info "Saved config: ${CONFIG_FILE}"
@@ -991,6 +1049,112 @@ cmd_verify() {
   return "$failed"
 }
 
+usage_public_token() {
+  cat <<'EOF'
+Usage:
+  sudo bash ./install.sh public-token show
+  sudo bash ./install.sh public-token set NEW_TOKEN
+
+Notes:
+  - only available for normal installs with email enabled
+  - show prints the current saved token
+  - set updates the saved config, syncs email-glue, and restarts email-glue when installed
+EOF
+}
+
+cmd_public_token_show() {
+  need_root
+  require_saved_install
+  load_config
+  load_state
+  [[ "$NO_EMAIL" == "0" ]] || die "public token is disabled for this install (--no-email)"
+
+  printf 'Public token: %s\n' "$PUBLIC_TOKEN"
+  printf 'Domain: %s\n' "$DOMAIN"
+  printf 'Phase: %s\n' "$CURRENT_PHASE"
+  printf 'Saved config: %s\n' "$CONFIG_FILE"
+
+  if [[ -f "$CLIENT_TOKEN_FILE" ]]; then
+    local runtime_token
+    runtime_token="$(tr -d '\r\n' < "$CLIENT_TOKEN_FILE")"
+    printf 'Runtime token file: %s\n' "$CLIENT_TOKEN_FILE"
+    if [[ "$runtime_token" != "$PUBLIC_TOKEN" ]]; then
+      printf 'WARN: runtime token file differs from saved config: %s\n' "$runtime_token"
+    fi
+  fi
+
+  if [[ -f "$EMAIL_GLUE_ENV_FILE" ]]; then
+    printf 'Runtime env file: %s\n' "$EMAIL_GLUE_ENV_FILE"
+  fi
+}
+
+cmd_public_token_set() {
+  local new_token="$1"
+
+  need_root
+  acquire_install_lock
+  require_saved_install
+  load_config
+  load_state
+  [[ "$NO_EMAIL" == "0" ]] || die "public token is disabled for this install (--no-email)"
+  validate_public_token_value "$new_token"
+
+  PUBLIC_TOKEN="$new_token"
+  save_config
+  save_state
+
+  if [[ -f "$EMAIL_GLUE_ENV_FILE" ]]; then
+    mkdir -p "$(dirname "$CLIENT_TOKEN_FILE")"
+    (
+      umask 077
+      printf '%s\n' "$PUBLIC_TOKEN" >"$CLIENT_TOKEN_FILE"
+    )
+    chmod 0600 "$CLIENT_TOKEN_FILE"
+    upsert_env_var_file "$EMAIL_GLUE_ENV_FILE" "EMAIL_GLUE_REQUIRE_CLIENT_TOKEN" "1"
+    upsert_env_var_file "$EMAIL_GLUE_ENV_FILE" "EMAIL_GLUE_CLIENT_TOKEN" "$PUBLIC_TOKEN"
+
+    if email_glue_service_installed; then
+      systemctl restart email-glue.service
+      info "Updated public token and restarted email-glue.service"
+    else
+      info "Updated public token in saved config and runtime files"
+      info "email-glue.service is not installed yet; rerun the same install command to continue"
+    fi
+    printf 'Public token: %s\n' "$PUBLIC_TOKEN"
+    return 0
+  fi
+
+  info "Updated public token in saved config"
+  info "email-glue is not installed yet; rerun the same install command to apply it"
+  printf 'Public token: %s\n' "$PUBLIC_TOKEN"
+}
+
+cmd_public_token() {
+  case "${1:-show}" in
+    show)
+      [[ $# -eq 0 || $# -eq 1 ]] || {
+        usage_public_token >&2
+        exit 1
+      }
+      cmd_public_token_show
+      ;;
+    set)
+      [[ $# -eq 2 ]] || {
+        usage_public_token >&2
+        exit 1
+      }
+      cmd_public_token_set "$2"
+      ;;
+    help|-h|--help)
+      usage_public_token
+      ;;
+    *)
+      usage_public_token >&2
+      exit 1
+      ;;
+  esac
+}
+
 maybe_dig() {
   command -v dig >/dev/null 2>&1
 }
@@ -1103,6 +1267,9 @@ main() {
       ;;
     upgrade)
       cmd_upgrade
+      ;;
+    public-token)
+      cmd_public_token "$@"
       ;;
     doctor)
       cmd_doctor

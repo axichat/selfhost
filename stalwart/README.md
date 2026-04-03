@@ -11,7 +11,7 @@ sudo ../install.sh install --domain example.com --public-token YOUR_TOKEN
 If you are following the normal self-host flow, stop here and go back to [`../README.md`](../README.md).
 
 In that normal root-wrapper flow, the installer waits in the same terminal for the Webadmin, DNS, and PTR steps. If it gets interrupted, rerun the same root `install` command.
-That same root wrapper also owns `upgrade`, `verify`, `doctor`, and `uninstall`; this component script is only for direct/manual work.
+That same root wrapper also owns `upgrade`, `verify`, `doctor`, `public-token`, and `uninstall`; this component script is only for direct/manual work.
 
 This README covers direct use of [`./install.sh`](install.sh) and the email-specific details behind that wrapper. The component script still expects `DOMAIN` to be set.
 

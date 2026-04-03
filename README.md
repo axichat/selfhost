@@ -2,22 +2,6 @@
 
 * * *
 
-<p align="center">
-  <a href="https://youtu.be/szR-YuDeMOM">
-    <img
-      src="https://img.youtube.com/vi/szR-YuDeMOM/hqdefault.jpg"
-      alt="Watch the Axichat self-host tutorial on YouTube"
-      width="720"
-    />
-  </a>
-</p>
-
-<p align="center">
-  <sub>
-    Netcup is a great VPS provider and one of the few that allows email hosting. Open a <a href="https://github.com/axichat/selfhost/issues/new">GitHub issue</a> in this repo, or email <code>voucher@axi.chat</code> with the Netcup product you want, so we can generate you a free voucher for that server. Use it at checkout for a discount and to help us pay for our servers.
-  </sub>
-</p>
-
 # Self-Hosting Quick Start
 
 This directory installs the Axichat self-host stack on your Debian server.
@@ -35,6 +19,20 @@ You should not need prior ejabberd or Stalwart knowledge; the script pauses and 
 - avoid hosted rate limits
 - control your own data
 - use your own domain for all your email and XMPP messages
+
+We highly recommend watching this tutorial before you start:
+
+<p align="center">
+  <a href="https://youtu.be/szR-YuDeMOM">
+    <img
+      src="https://img.youtube.com/vi/szR-YuDeMOM/hqdefault.jpg"
+      alt="Watch the Axichat self-host tutorial on YouTube"
+      width="720"
+    />
+  </a>
+</p>
+
+<sub><em>We have found Netcup great for email hosting because it is one of the few VPS providers that allows port 25 and has been reliable for us. If you want a voucher, open a <a href="https://github.com/axichat/selfhost/issues/new">GitHub issue</a> or email <code>voucher@axi.chat</code> with the product you want.</em></sub>
 
 ## Before You Start
 
@@ -149,6 +147,24 @@ sudo bash ./install.sh upgrade
 `upgrade` re-runs the saved app/service configuration. It does not restart the install from scratch.
 
 If you use `fpush`, keep `/opt/fpush/settings.json` and the APNS `.p12` file it references in place before running `upgrade`. That is what lets the rerun stay non-interactive.
+
+## Public Token
+
+To view the current public token later:
+
+```bash
+sudo bash ./install.sh public-token show
+```
+
+To change it without reinstalling:
+
+```bash
+sudo bash ./install.sh public-token set new-shared-token
+```
+
+`public-token show` prints the saved token the clients should enter.
+`public-token set` updates the saved wrapper config, syncs `email-glue`, and restarts `email-glue` when it is already installed.
+If the install is still paused mid-flow, `set` updates the saved config so the next rerun uses the new token.
 
 ## Uninstall
 
