@@ -164,9 +164,9 @@ sudo bash ./install.sh public-token set new-shared-token
 `public-token set` updates the saved wrapper config, syncs `email-glue`, and restarts `email-glue` when it is already installed.
 If the install is still paused mid-flow, `set` updates the saved config so the next rerun uses the new token.
 
-## Uninstall
+## Uninstall or Start Over
 
-To reset a demo box and try again from a clean local state, run:
+To remove the local Axichat install and start over from a clean local state, run:
 
 ```bash
 sudo bash ./uninstall.sh --yes
@@ -174,7 +174,7 @@ sudo bash ./uninstall.sh --yes
 
 That removes the locally installed stack and then prints the manual DNS / PTR cleanup steps you still need to do off-server.
 It removes the installed app stack, not the whole server history. By default it asks whether to purge ejabberd ACME certificate state.
-Choose no if you want demo reruns to reuse the existing ACME state and avoid new TLS issuance.
+Choose no if you plan to reinstall on the same server and want to reuse the existing ACME state to avoid new TLS issuance.
 Choose yes, or pass `--purge-certs`, if you want full certificate cleanup.
 
 For the full flag list, run:

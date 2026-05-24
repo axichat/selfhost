@@ -30,7 +30,7 @@ Default behavior:
   - deletes the local app data, secrets, units, and wrapper state
   - removes the ejabberd port-80 forwarder service and any old redirect block this repo added
   - asks whether to purge ejabberd ACME account/certificate state
-  - purges the ejabberd package so the next demo attempt starts cleanly
+  - purges the ejabberd package so the next install attempt starts cleanly
 
 Options:
   --yes                    Do not ask for confirmation.
@@ -145,7 +145,7 @@ ejabberd ACME account/certificate state was found at:
   ${EJABBERD_ACME_DIR}
 
 Choose yes only if you really want a full certificate cleanup.
-Choose no if you want future demo reruns to reuse the existing ACME state and avoid new TLS issuance.
+Choose no if you want future installs on this server to reuse the existing ACME state and avoid new TLS issuance.
 EOF
 
   local answer
@@ -332,9 +332,9 @@ Off-server uninstall follow-up for ${DOMAIN_HINT}:
    - SPF TXT
    - DMARC TXT at _dmarc.${DOMAIN_HINT}
    - DKIM TXT/CNAME records shown by Stalwart Webadmin
-2. Delete any A / AAAA records or XMPP-related records you pointed at this demo server.
+2. Delete any A / AAAA records or XMPP-related records you pointed at this server.
 3. Remove the PTR / reverse-DNS record in your hosting provider panel.
-4. If this is a throwaway demo VPS, the cleanest reset is still deleting the server or reverting a snapshot.
+4. If this server was only used for this Axichat install, the cleanest reset is still deleting the server or reverting a snapshot.
 
 Local uninstall is complete.
 Only the off-server DNS and PTR cleanup is still manual.
