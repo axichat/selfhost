@@ -146,8 +146,6 @@ sudo bash ./install.sh upgrade
 
 `upgrade` re-runs the saved app/service configuration. It does not restart the install from scratch.
 
-If you use `fpush`, keep `/opt/fpush/settings.json` and the APNS `.p12` file it references in place before running `upgrade`. That is what lets the rerun stay non-interactive.
-
 ## Public Token
 
 To view the current public token later:
@@ -189,7 +187,7 @@ If you rerun the same `install` command after an interruption, the wrapper conti
 
 ## Component READMEs
 
-- [`ejabberd/README.md`](ejabberd/README.md): advanced/manual ejabberd path, fpush notes, and ejabberd-specific prompts
+- [`ejabberd/README.md`](ejabberd/README.md): advanced/manual ejabberd path and ejabberd-specific prompts
 - [`stalwart/README.md`](stalwart/README.md): advanced/manual Stalwart path, Webadmin/API-key flow, direct script flags, and email-specific verification
 
 Most users should only need those READMEs for troubleshooting, manual recovery, or direct component debugging.

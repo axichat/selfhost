@@ -107,7 +107,7 @@ confirm_teardown() {
 
   cat <<EOF
 This will remove the local Axichat self-host install for ${DOMAIN_HINT}:
-  - ejabberd, Stalwart, email-glue, and fpush services
+  - ejabberd, Stalwart, and email-glue services
   - local app data, secrets, wrapper config/state, and the ejabberd port-80 forwarder this repo added
   - ejabberd ACME account/certificate state at ${EJABBERD_ACME_DIR}$(
       case "$CERTS_MODE" in
@@ -228,7 +228,6 @@ teardown_services() {
     update-stalwart-cert.service \
     email-glue.service \
     stalwart.service \
-    fpush.service \
     ejabberd-acme-redirect.service \
     ejabberd
 
@@ -244,7 +243,6 @@ teardown_systemd_units() {
     /etc/systemd/system/email-glue.service \
     /etc/systemd/system/update-stalwart-cert.service \
     /etc/systemd/system/update-stalwart-cert.timer \
-    /etc/systemd/system/fpush.service \
     /etc/systemd/system/ejabberd-acme-redirect.service \
     /usr/local/bin/email-glue \
     /usr/local/bin/sync-ejabberd-cert.sh \
@@ -263,8 +261,6 @@ teardown_data() {
     /var/lib/stalwart \
     /var/lib/email-glue \
     /root/stalwart-secrets \
-    /opt/fpush \
-    /var/lib/fpush \
     /var/lib/ejabberd \
     /var/www/upload \
     /opt/ejabberd \
@@ -274,9 +270,6 @@ teardown_data() {
 
   if id -u emailglue >/dev/null 2>&1; then
     userdel -r emailglue >/dev/null 2>&1 || userdel emailglue >/dev/null 2>&1 || true
-  fi
-  if id -u fpush >/dev/null 2>&1; then
-    userdel -r fpush >/dev/null 2>&1 || userdel fpush >/dev/null 2>&1 || true
   fi
 }
 

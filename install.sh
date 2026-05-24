@@ -17,7 +17,6 @@ DOMAIN=""
 NO_EMAIL="0"
 PUBLIC_TOKEN=""
 GLUE_API_TOKEN=""
-ENABLE_FPUSH="0"
 TURN_PUBLIC_IP=""
 STALWART_SSH_HOST=""
 STALWART_SSH_USER="root"
@@ -29,7 +28,6 @@ ARG_DOMAIN_SET="0"
 ARG_PUBLIC_TOKEN_SET="0"
 ARG_GLUE_API_TOKEN_SET="0"
 ARG_NO_EMAIL_SET="0"
-ARG_ENABLE_FPUSH_SET="0"
 ARG_TURN_PUBLIC_IP_SET="0"
 ARG_STALWART_SSH_HOST_SET="0"
 ARG_STALWART_SSH_USER_SET="0"
@@ -69,7 +67,6 @@ Install options:
                                   Shared email-glue client token, not an admin password.
   --no-email                      Skip Stalwart and email-glue.
   --glue-api-token TOKEN          Optional at install time.
-  --enable-fpush                  Pre-answer the ejabberd installer with fpush enabled.
   --turn-public-ip IP             Pre-answer the ejabberd installer TURN IP prompt.
   --stalwart-ssh-host HOST        Host shown in the Webadmin tunnel instructions.
   --stalwart-ssh-user USER        SSH user shown in the Webadmin tunnel instructions.
@@ -226,7 +223,6 @@ save_config() {
       write_shell_var "NO_EMAIL" "$NO_EMAIL"
       write_shell_var "PUBLIC_TOKEN" "$PUBLIC_TOKEN"
       write_shell_var "GLUE_API_TOKEN" "$GLUE_API_TOKEN"
-      write_shell_var "ENABLE_FPUSH" "$ENABLE_FPUSH"
       write_shell_var "TURN_PUBLIC_IP" "$TURN_PUBLIC_IP"
       write_shell_var "STALWART_SSH_HOST" "$STALWART_SSH_HOST"
       write_shell_var "STALWART_SSH_USER" "$STALWART_SSH_USER"
@@ -303,12 +299,11 @@ validate_install_matches_saved_config() {
   local cli_no_email="$2"
   local cli_public_token="$3"
   local cli_glue_api_token="$4"
-  local cli_enable_fpush="$5"
-  local cli_turn_public_ip="$6"
-  local cli_stalwart_ssh_host="$7"
-  local cli_stalwart_ssh_user="$8"
-  local cli_tunnel_local_port="$9"
-  local cli_webadmin_remote_port="${10}"
+  local cli_turn_public_ip="$5"
+  local cli_stalwart_ssh_host="$6"
+  local cli_stalwart_ssh_user="$7"
+  local cli_tunnel_local_port="$8"
+  local cli_webadmin_remote_port="$9"
 
   if [[ "$ARG_DOMAIN_SET" == "1" && "$cli_domain" != "$DOMAIN" ]]; then
     die "a saved install already exists for domain ${DOMAIN}, not ${cli_domain}.
@@ -319,7 +314,6 @@ If you intentionally want to start over from scratch, remove:
   fi
   [[ "$ARG_NO_EMAIL_SET" != "1" || "$cli_no_email" == "$NO_EMAIL" ]] || die "the saved install mode does not match this command"
   [[ "$ARG_PUBLIC_TOKEN_SET" != "1" || "$cli_public_token" == "$PUBLIC_TOKEN" ]] || die "the saved public token does not match this command"
-  [[ "$ARG_ENABLE_FPUSH_SET" != "1" || "$cli_enable_fpush" == "$ENABLE_FPUSH" ]] || die "the saved fpush setting does not match this command"
   [[ "$ARG_TURN_PUBLIC_IP_SET" != "1" || "$cli_turn_public_ip" == "$TURN_PUBLIC_IP" ]] || die "the saved TURN public IP does not match this command"
   [[ "$ARG_STALWART_SSH_HOST_SET" != "1" || "$cli_stalwart_ssh_host" == "$STALWART_SSH_HOST" ]] || die "the saved Stalwart SSH host does not match this command"
   [[ "$ARG_STALWART_SSH_USER_SET" != "1" || "$cli_stalwart_ssh_user" == "$STALWART_SSH_USER" ]] || die "the saved Stalwart SSH user does not match this command"
@@ -481,7 +475,6 @@ validate_install_args() {
 Example:
   sudo bash ./install.sh install --domain example.com --public-token your-shared-token"
   [[ "$NO_EMAIL" == "0" || "$NO_EMAIL" == "1" ]] || die "internal error: NO_EMAIL must be 0 or 1"
-  [[ "$ENABLE_FPUSH" == "0" || "$ENABLE_FPUSH" == "1" ]] || die "internal error: ENABLE_FPUSH must be 0 or 1"
 
   if [[ "$NO_EMAIL" == "1" ]]; then
     [[ -z "$PUBLIC_TOKEN" ]] || die "--public-token cannot be used with --no-email"
@@ -549,11 +542,6 @@ parse_install_args() {
       --no-email)
         NO_EMAIL="1"
         ARG_NO_EMAIL_SET="1"
-        shift
-        ;;
-      --enable-fpush)
-        ENABLE_FPUSH="1"
-        ARG_ENABLE_FPUSH_SET="1"
         shift
         ;;
       --turn-public-ip)
@@ -681,11 +669,8 @@ run_ejabberd_phase() {
     info "If TURN auto-detection fails, the ejabberd installer may ask for the server's public IPv4"
   fi
 
-  local fpush_answer="no"
-  [[ "$ENABLE_FPUSH" == "1" ]] && fpush_answer="yes"
-
   local -a env_args
-  env_args=("DOMAIN=$DOMAIN" "ENABLE_FPUSH=$fpush_answer" "SKIP_FIREWALL=1")
+  env_args=("DOMAIN=$DOMAIN" "SKIP_FIREWALL=1")
   if [[ -n "$TURN_PUBLIC_IP" ]]; then
     env_args+=("TURN_IPV4=$TURN_PUBLIC_IP")
   fi
@@ -923,7 +908,6 @@ Remove these if you intentionally want to start over:
     local cli_no_email="$NO_EMAIL"
     local cli_public_token="$PUBLIC_TOKEN"
     local cli_glue_api_token="$GLUE_API_TOKEN"
-    local cli_enable_fpush="$ENABLE_FPUSH"
     local cli_turn_public_ip="$TURN_PUBLIC_IP"
     local cli_stalwart_ssh_host="$STALWART_SSH_HOST"
     local cli_stalwart_ssh_user="$STALWART_SSH_USER"
@@ -936,7 +920,6 @@ Remove these if you intentionally want to start over:
       "$cli_no_email" \
       "$cli_public_token" \
       "$cli_glue_api_token" \
-      "$cli_enable_fpush" \
       "$cli_turn_public_ip" \
       "$cli_stalwart_ssh_host" \
       "$cli_stalwart_ssh_user" \
@@ -971,12 +954,6 @@ cmd_upgrade() {
   [[ "$CURRENT_PHASE" == "complete" ]] || die "the saved install is not complete yet.
 
 Rerun the same install command again instead."
-
-  if [[ "$ENABLE_FPUSH" == "1" && ! -f /opt/fpush/settings.json ]]; then
-    die "upgrade cannot safely rerun the fpush path because /opt/fpush/settings.json is missing.
-
-Either restore the existing fpush settings first or rerun ejabberd/install.sh manually."
-  fi
 
   local backup_state
   local backup_json

@@ -25,13 +25,8 @@ This README is only for direct/manual ejabberd work. This folder has the compone
 
 - Required env: `DOMAIN=example.com`
 - Optional env: `EJABBERD_VERSION_PREFIX=26.` to pin the apt version prefix
-- Optional env: `ENABLE_FPUSH=yes|no` to pre-answer the fpush prompt
 - Optional env: `TURN_IPV4=1.2.3.4` to pre-answer the TURN IP prompt
-- Re-run behavior for `fpush`: if `/opt/fpush/settings.json` already exists and its APNS cert path is still valid, reruns reuse the saved fpush secret and APNS settings instead of asking for them again
-- Interactive prompt: `Enable fpush (XEP-0357) component? [y/N]`
-- Interactive prompt: fpush component secret if you enable fpush
 - Interactive prompt: TURN public IPv4 if auto-detection fails
-- Interactive prompt: APNS module name, `.p12` path, password, topic, and environment if you enable fpush
 
 ## Manual install outline
 
@@ -42,10 +37,9 @@ This manual path assumes you are intentionally bypassing the wrapper and taking 
 ```bash
 apt-get update -y
 apt-get install -y --no-install-recommends \
-  ca-certificates curl gnupg iproute2 python3 \
+  ca-certificates curl gnupg iproute2 \
   socat \
-  sqlite3 imagemagick fonts-dejavu-core gsfonts \
-  git build-essential pkg-config libssl-dev
+  sqlite3 imagemagick fonts-dejavu-core gsfonts
 
 curl -fsSL -o /etc/apt/sources.list.d/ejabberd.list https://repo.process-one.net/ejabberd.list
 curl -fsSL -o /etc/apt/trusted.gpg.d/ejabberd.gpg https://repo.process-one.net/ejabberd.gpg
@@ -64,7 +58,6 @@ chmod 750 /opt/ejabberd/database /var/www/upload
 3. Prepare the config and place it in `/opt/ejabberd/conf/ejabberd.yml`.
 
 - Copy `ejabberd.yml` from this directory.
-- If you will use fpush, replace `__FPUSH_COMPONENT_SECRET__`.
 - Replace `__TURN_IPV4__` (or disable TURN if you do not have a public IP).
 - Set `captcha_cmd` to the installed path, typically `/opt/ejabberd-*/lib/captcha.sh`.
 
@@ -111,19 +104,6 @@ ejabberdctl register admin "$DOMAIN" <password>
 ejabberdctl request-certificate "$DOMAIN"
 systemctl restart ejabberd
 ```
-
-9. Install fpush (optional, APNS only).
-
-If you enable it, the installer builds fpush from source and asks for:
-- APNS .p12 path
-- APNS topic (bundle id)
-- APNS environment (production/sandbox)
-
-On rerun or wrapper-driven `upgrade`, existing fpush installs reuse `/opt/fpush/settings.json` and the referenced APNS certificate file when they are still present. If you delete that file or move the `.p12`, the path becomes interactive again.
-
-If you do this manually, follow the same steps as in `ejabberd/install.sh` under “Installing fpush”.
-
-This is intentionally not part of the normal beginner path because it requires APNS credentials and extra Rust/fpush setup.
 
 ## Ports to allow (in your provider firewall)
 

@@ -44,12 +44,7 @@ acl:
     user: []
 
   allowed_registration:
-    user_regexp: "^[a-z][a-z0-9._-]{3,19}$"
-
-  blocked_registration:
-    user_glob:
-      - "?"
-      - "??"
+    user_regexp: "^[a-z][a-z0-9._-]*$"
 
   local:
     user_regexp: ""
@@ -82,7 +77,6 @@ access_rules:
     - allow: loopback
 
   registration:
-    - deny: blocked_registration
     - allow: allowed_registration
 
   s2s:
@@ -195,15 +189,6 @@ listen:
     use_turn: true
     turn_ipv4_address: "__TURN_IPV4__"
 
-  -
-    port: 5347
-    ip: "127.0.0.1"
-    module: ejabberd_service
-    shaper_rule: fast
-    hosts:
-      push.@HOST@:
-        password: "__FPUSH_COMPONENT_SECRET__"
-
 modules:
   mod_adhoc: {}
   mod_admin_extra: {}
@@ -285,9 +270,6 @@ modules:
     force_node_config:
       storage:bookmarks:
         access_model: whitelist
-
-  mod_push: {}
-  mod_push_keepalive: {}
 
   mod_register:
     access: registration
