@@ -133,7 +133,12 @@ export PATH=${EJABBERD_BIN_DIR}:\$PATH
 EOF
 chmod 0644 /etc/profile.d/ejabberd.sh
 # Also expose ejabberdctl in a standard bin dir so non-login shells can use it.
-ln -sfn "${EJABBERDCTL}" /usr/local/bin/ejabberdctl
+rm -f /usr/local/bin/ejabberdctl
+cat >/usr/local/bin/ejabberdctl <<EOF
+#!/bin/sh
+exec "${EJABBERDCTL}" "\$@"
+EOF
+chmod 0755 /usr/local/bin/ejabberdctl
 
 mkdir -p /opt/ejabberd/conf /opt/ejabberd/database /var/www/upload /var/lib/ejabberd
 chown -R ejabberd:ejabberd /opt/ejabberd/database /var/www/upload /var/lib/ejabberd

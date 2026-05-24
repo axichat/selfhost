@@ -8,7 +8,12 @@ mkdir -p "$DEST_DIR"
 
 EJABBERDCTL=""
 if command -v ejabberdctl >/dev/null 2>&1; then
-  EJABBERDCTL="$(command -v ejabberdctl)"
+  resolved_ejabberdctl="$(command -v ejabberdctl)"
+  if canonical_ejabberdctl="$(readlink -f "$resolved_ejabberdctl" 2>/dev/null)"; then
+    EJABBERDCTL="$canonical_ejabberdctl"
+  else
+    EJABBERDCTL="$resolved_ejabberdctl"
+  fi
 elif [[ -x /opt/ejabberd/bin/ejabberdctl ]]; then
   EJABBERDCTL="/opt/ejabberd/bin/ejabberdctl"
 else
