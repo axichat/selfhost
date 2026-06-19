@@ -59,6 +59,7 @@ The installer still sets up the local ejabberd ACME port-80 forwarder itself, be
 If you leave email enabled, the following must be done separately from the script:
 
 - Stalwart Webadmin over an SSH tunnel
+- creating the Stalwart webhook for Android mail notifications
 - copying DNS records from Webadmin into your DNS provider
 - setting PTR / reverse DNS with your host or provider
 
@@ -117,10 +118,12 @@ Typical email checkpoints:
 
 - create the Stalwart domain in Webadmin
 - create the `email-glue` Stalwart API key
+- create the Stalwart webhook for Android mail notifications
 - copy DNS records from Webadmin into your DNS provider
 - configure PTR / reverse DNS in your hosting provider panel
 
 For the normal guided setup, use your apex domain itself as the mail host. You do not need `mail.example.com` records unless you intentionally want a separate mail hostname.
+Android mail notifications are enabled by default for normal email installs. The installer prints the exact webhook URL, bearer token, and Stalwart Webadmin fields when it reaches that checkpoint.
 
 ## Verify
 
@@ -145,6 +148,23 @@ sudo bash ./install.sh upgrade
 ```
 
 `upgrade` re-runs the saved app/service configuration. It does not restart the install from scratch.
+Existing completed installs should use `upgrade` to pick up new default service features, including mail hook notifications. Rerunning `install` after completion only reports that the saved install is already complete.
+
+## Android Mail Notifications
+
+Selfhost Android mail notifications do not use `fpush`, APNS, FCM, or XEP-0357 push. Stalwart sends a `message-ingest.ham` webhook to `email-glue`; `email-glue` sends an XMPP `headline` marker from `mail-notify@DOMAIN` through ejabberd's local `/api/send_stanza`; a connected Android client treats `<x xmlns='urn:axichat:mail-push:0'/>` as an email sync/local notification hint.
+
+The marker is not a chat message and clients must not render it as normal chat. If Android does not have a live XMPP connection, this setup is not reliable native OS background push.
+
+Troubleshooting:
+
+```bash
+journalctl -u email-glue.service -b --no-pager | tail -n 200
+journalctl -u ejabberd -b --no-pager | tail -n 200
+curl -sk -X POST https://127.0.0.1:8443/hooks/stalwart/events
+```
+
+The unauthenticated hook request should return `401`.
 
 ## Public Token
 
@@ -198,3 +218,4 @@ Most users should only need those READMEs for troubleshooting, manual recovery, 
 - ejabberd upload limits are large
 - message history is kept by default
 - normal installs require a user-chosen public client token
+- normal email installs enable Android mail notifications through the Stalwart webhook

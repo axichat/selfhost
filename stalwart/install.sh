@@ -14,14 +14,17 @@ PUBLIC_TOKEN_OVERRIDE=""
 PUBLIC_TOKEN_OVERRIDE_SET="0"
 GLUE_API_TOKEN_OVERRIDE=""
 GLUE_API_TOKEN_OVERRIDE_SET="0"
+MAIL_PUSH_OVERRIDE=""
+MAIL_PUSH_OVERRIDE_SET="0"
 : "${SKIP_FIREWALL:=0}"
 : "${SKIP_DNS_GUIDANCE:=0}"
+: "${SKIP_MAIL_PUSH_GUIDANCE:=0}"
 LOG_DIR="/var/log/axichat-selfhost"
 INSTALL_LOG="${LOG_DIR}/stalwart-install.log"
 
 usage() {
   cat <<'EOF'
-Usage: install.sh [--public-token[=TOKEN]] [--no-public-token] [--glue-api-token=TOKEN]
+Usage: install.sh [--public-token[=TOKEN]] [--no-public-token] [--glue-api-token=TOKEN] [--no-mail-push]
 
 Options:
   --public-token[=TOKEN]  Require X-Client-Token / X-Auth-Token for email-glue.
@@ -32,6 +35,9 @@ Options:
                           Not recommended on an internet-reachable host.
   --glue-api-token=TOKEN  Use this Stalwart API key for email-glue and persist it.
                           If omitted, reuse glue_api_token.txt when valid, else prompt.
+  --mail-push             Enable Stalwart webhook -> XMPP mail notifications.
+                          This is the default for normal email installs.
+  --no-mail-push          Disable Stalwart webhook -> XMPP mail notifications.
   -h, --help              Show this help.
 EOF
 }
@@ -61,6 +67,16 @@ while [[ $# -gt 0 ]]; do
       if [[ -n "$GLUE_API_TOKEN_OVERRIDE" ]]; then
         GLUE_API_TOKEN_OVERRIDE_SET="1"
       fi
+      shift
+      ;;
+    --mail-push)
+      MAIL_PUSH_OVERRIDE="1"
+      MAIL_PUSH_OVERRIDE_SET="1"
+      shift
+      ;;
+    --no-mail-push)
+      MAIL_PUSH_OVERRIDE="0"
+      MAIL_PUSH_OVERRIDE_SET="1"
       shift
       ;;
     -h|--help)
@@ -98,6 +114,82 @@ write_env_var() {
   local value="$2"
   printf '%s=' "$key"
   printf '%q\n' "$value"
+}
+
+normalize_bool() {
+  local key="$1"
+  local value="$2"
+  case "${value,,}" in
+    1|true|yes|on)
+      printf '1\n'
+      ;;
+    0|false|no|off)
+      printf '0\n'
+      ;;
+    *)
+      echo "ERROR: ${key} must be a boolean (1/0, true/false, yes/no)" >&2
+      exit 1
+      ;;
+  esac
+}
+
+read_existing_email_glue_var() {
+  local key="$1"
+  local file="/etc/sysconfig/email-glue"
+  local line value
+  [[ -f "$file" ]] || return 1
+  line="$(grep -E "^${key}=" "$file" | tail -n1 || true)"
+  [[ -n "$line" ]] || return 1
+  value="${line#*=}"
+  value="${value%\"}"
+  value="${value#\"}"
+  value="${value%\'}"
+  value="${value#\'}"
+  printf '%s\n' "$value"
+}
+
+resolve_mail_push() {
+  local existing
+  if [[ "$MAIL_PUSH_OVERRIDE_SET" == "1" ]]; then
+    normalize_bool "MAIL_PUSH_OVERRIDE" "$MAIL_PUSH_OVERRIDE"
+    return
+  fi
+  if [[ -n "${EMAIL_GLUE_MAIL_PUSH:-}" ]]; then
+    normalize_bool "EMAIL_GLUE_MAIL_PUSH" "$EMAIL_GLUE_MAIL_PUSH"
+    return
+  fi
+  if existing="$(read_existing_email_glue_var "EMAIL_GLUE_MAIL_PUSH")"; then
+    normalize_bool "EMAIL_GLUE_MAIL_PUSH" "$existing"
+    return
+  fi
+  printf '1\n'
+}
+
+print_mail_push_webhook_guidance() {
+  local hook_token_file="$1"
+  local hook_token="$2"
+  bold "MANUAL STEP: Create the Stalwart mail notification webhook"
+  cat <<EOF
+
+Create a Stalwart webhook:
+
+Path: Settings -> Telemetry -> Webhooks
+Name: anything, for example "Axichat mail notifications"
+URL: https://${DOMAIN}:8443/hooks/stalwart/events
+Method: POST
+HTTP headers: Authorization: Bearer ${hook_token}
+Events: message-ingest.ham
+Throttle: 1s
+Timeout: 5s
+Enable: true
+Allow invalid certs: false
+
+This sends:
+Authorization: Bearer ${hook_token}
+
+Token file: ${hook_token_file}
+
+EOF
 }
 on_err() {
   local rc=$?
@@ -395,11 +487,32 @@ if [[ "$REQUIRE_PUBLIC_TOKEN" == "1" ]]; then
   fi
 fi
 
+MAIL_PUSH="$(resolve_mail_push)"
+hook_token_file="$SECRETS_DIR/stalwart_hook_token.txt"
+STALWART_HOOK_TOKEN=""
+if [[ "$MAIL_PUSH" == "1" ]]; then
+  if [[ -s "$hook_token_file" ]]; then
+    STALWART_HOOK_TOKEN="$(tr -d '\r\n' < "$hook_token_file")"
+    info "Reusing existing Stalwart hook token from $hook_token_file"
+  else
+    STALWART_HOOK_TOKEN="$(openssl rand -hex 32)"
+    printf "%s\n" "$STALWART_HOOK_TOKEN" > "$hook_token_file"
+    chmod 0600 "$hook_token_file"
+  fi
+fi
+
 {
   write_env_var "EMAIL_DOMAIN" "$DOMAIN"
   write_env_var "STALWART_API_TOKEN" "$GLUE_API_TOKEN"
   write_env_var "EMAIL_GLUE_REQUIRE_CLIENT_TOKEN" "$REQUIRE_PUBLIC_TOKEN"
   write_env_var "EMAIL_GLUE_DEFAULT_QUOTA_BYTES" "0"
+  write_env_var "EMAIL_GLUE_MAIL_PUSH" "$MAIL_PUSH"
+  if [[ "$MAIL_PUSH" == "1" ]]; then
+    write_env_var "EMAIL_GLUE_MAIL_PUSH_EVENT_TYPES" "message-ingest.ham"
+    write_env_var "EMAIL_GLUE_EJABBERD_API" "http://127.0.0.1:5281/api"
+    write_env_var "EMAIL_GLUE_MAIL_NOTIFY_JID" "mail-notify@${DOMAIN}"
+    write_env_var "EMAIL_GLUE_STALWART_HOOK_TOKEN" "$STALWART_HOOK_TOKEN"
+  fi
 } > /etc/sysconfig/email-glue
 if [[ "$REQUIRE_PUBLIC_TOKEN" == "1" ]]; then
   write_env_var "EMAIL_GLUE_CLIENT_TOKEN" "$CLIENT_TOKEN" >> /etc/sysconfig/email-glue
@@ -426,18 +539,28 @@ detect_email_glue_arch() {
   esac
 }
 
+email_glue_binary_supports_mail_push() {
+  local binary="$1"
+  grep -a -q 'urn:axichat:mail-push:0' "$binary"
+}
+
 install_email_glue_binary() {
   local arch source
   arch="$(detect_email_glue_arch)"
   source="${EMAIL_GLUE_PREBUILT_DIR}/email-glue-linux-${arch}"
 
   if [[ "$arch" != "unsupported" && -x "$source" ]]; then
-    info "Installing bundled email-glue binary for linux/${arch}"
-    install -m 0755 "$source" "$EMAIL_GLUE_TARGET"
-    return
+    if [[ "$MAIL_PUSH" == "1" ]] && ! email_glue_binary_supports_mail_push "$source"; then
+      warn "Bundled email-glue binary for linux/${arch} does not include mail hook support. Falling back to a local build."
+    else
+      info "Installing bundled email-glue binary for linux/${arch}"
+      install -m 0755 "$source" "$EMAIL_GLUE_TARGET"
+      return
+    fi
+  else
+    warn "No bundled email-glue binary is available for this architecture. Falling back to a local Go build."
   fi
 
-  warn "No bundled email-glue binary is available for this architecture. Falling back to a local Go build."
   run_logged_step "Installing Go toolchain for local email-glue build" apt-get install -y golang-go
   (
     cd "$(dirname "$0")/email-glue"
@@ -452,6 +575,9 @@ run_logged_step "Restarting email-glue" systemctl restart email-glue.service
 log_step_output systemctl --no-pager --full status email-glue.service
 run_logged_step "Starting the Stalwart certificate refresh timer" systemctl enable --now update-stalwart-cert.timer
 
+if [[ "$MAIL_PUSH" == "1" && "$SKIP_MAIL_PUSH_GUIDANCE" != "1" ]]; then
+  print_mail_push_webhook_guidance "$hook_token_file" "$STALWART_HOOK_TOKEN"
+fi
 
 if [[ "$SKIP_DNS_GUIDANCE" != "1" ]]; then
   bold "MANUAL STEP: Configure DNS (DKIM / DMARC / SPF / MX) in your registrar"
@@ -509,5 +635,11 @@ if [[ "$REQUIRE_PUBLIC_TOKEN" == "1" ]]; then
   echo "client_token_header=X-Client-Token"
 else
   echo "client_token_file=disabled"
+fi
+if [[ "$MAIL_PUSH" == "1" ]]; then
+  echo "mail_push=enabled"
+  echo "stalwart_hook_token_file=$hook_token_file"
+else
+  echo "mail_push=disabled"
 fi
 echo "dns_records_note=Copy DNS records from Webadmin → Domains → (⋯) → DNS Records"

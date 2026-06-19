@@ -9,6 +9,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -45,6 +46,12 @@ type Config struct {
 	RequireClientToken bool
 	ClientToken        string
 	ClientTokenFile    string
+
+	MailPush           bool
+	MailPushEventTypes []string
+	EjabberdAPIBase    string
+	MailNotifyJID      string
+	StalwartHookToken  string
 }
 
 func getenv(key, def string) string {
@@ -53,6 +60,17 @@ func getenv(key, def string) string {
 		return def
 	}
 	return v
+}
+
+func splitCommaList(value string) []string {
+	var out []string
+	for _, part := range strings.Split(value, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 func getenvInt64(key string, def int64) (int64, error) {
@@ -142,6 +160,10 @@ func loadConfig() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	mailPush, err := getenvBool("EMAIL_GLUE_MAIL_PUSH", false)
+	if err != nil {
+		return nil, err
+	}
 
 	token := strings.TrimSpace(os.Getenv("EMAIL_GLUE_CLIENT_TOKEN"))
 	tokenFile := getenv("EMAIL_GLUE_CLIENT_TOKEN_FILE", "/var/lib/email-glue/client_token")
@@ -158,6 +180,14 @@ func loadConfig() (*Config, error) {
 		token = t
 	}
 
+	mailPushEventTypes := splitCommaList(getenv("EMAIL_GLUE_MAIL_PUSH_EVENT_TYPES", "message-ingest.ham"))
+	ejabberdAPIBase := strings.TrimRight(getenv("EMAIL_GLUE_EJABBERD_API", "http://127.0.0.1:5281/api"), "/")
+	mailNotifyJID := getenv("EMAIL_GLUE_MAIL_NOTIFY_JID", fmt.Sprintf("mail-notify@%s", domain))
+	stalwartHookToken := strings.TrimSpace(os.Getenv("EMAIL_GLUE_STALWART_HOOK_TOKEN"))
+	if mailPush && stalwartHookToken == "" {
+		return nil, errors.New("EMAIL_GLUE_STALWART_HOOK_TOKEN is required when EMAIL_GLUE_MAIL_PUSH is enabled")
+	}
+
 	cfg := &Config{
 		Domain:             domain,
 		StalwartAPIBase:    strings.TrimRight(apiBase, "/"),
@@ -169,6 +199,11 @@ func loadConfig() (*Config, error) {
 		RequireClientToken: requireClientToken,
 		ClientToken:        token,
 		ClientTokenFile:    tokenFile,
+		MailPush:           mailPush,
+		MailPushEventTypes: mailPushEventTypes,
+		EjabberdAPIBase:    ejabberdAPIBase,
+		MailNotifyJID:      mailNotifyJID,
+		StalwartHookToken:  stalwartHookToken,
 	}
 	return cfg, nil
 }
@@ -591,6 +626,40 @@ func (c *stalwartClient) findPrincipalByEmail(email string) (principalRef, error
 	return principalRef{}, nil
 }
 
+func (c *stalwartClient) findPrincipalEmailsByIdentifier(identifier string) ([]string, error) {
+	identifier = strings.TrimSpace(identifier)
+	if identifier == "" {
+		return nil, nil
+	}
+
+	req, _ := http.NewRequest("GET", c.base+"/principal?types=individual&limit=1000", nil)
+
+	var js map[string]any
+	status, body, err := c.doJSON(req, &js)
+	if apiErr := newStalwartAPIError("list principal", status, body, js, err); apiErr != nil {
+		return nil, apiErr
+	}
+	if js == nil {
+		return nil, errors.New("stalwart list principal: empty json")
+	}
+
+	data, _ := js["data"].(map[string]any)
+	itemsAny, _ := data["items"].([]any)
+
+	for _, it := range itemsAny {
+		m, ok := it.(map[string]any)
+		if !ok {
+			continue
+		}
+		if idToString(m["id"]) != identifier && stringValue(m["name"]) != identifier {
+			continue
+		}
+		return normalizeEmails(m["emails"]), nil
+	}
+
+	return nil, nil
+}
+
 func (c *stalwartClient) withPrincipalIdentifiers(op string, ref principalRef, fn func(string) error) error {
 	identifiers := uniqueNonEmpty(ref.ID, ref.Name)
 	if len(identifiers) == 0 {
@@ -752,6 +821,7 @@ func imapLogin(domain, email, password string) error {
 // --- HTTP server ---
 
 var localpartRe = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+var emailAddressRe = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`)
 
 type server struct {
 	cfg      *Config
@@ -896,6 +966,20 @@ func (s *server) checkClientToken(r *http.Request) bool {
 	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
 }
 
+func (s *server) checkStalwartHookToken(r *http.Request) bool {
+	got := strings.TrimSpace(r.Header.Get("Authorization"))
+	const prefix = "Bearer "
+	if !strings.HasPrefix(got, prefix) {
+		return false
+	}
+	got = strings.TrimSpace(strings.TrimPrefix(got, prefix))
+	want := s.cfg.StalwartHookToken
+	if got == "" || want == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
+}
+
 func (s *server) writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -914,6 +998,411 @@ func (s *server) writeRawJSON(w http.ResponseWriter, status int, body []byte) {
 func (s *server) writeStalwartAPIError(w http.ResponseWriter, err error) {
 	status, payload := clientStalwartError(err)
 	s.writeJSON(w, status, payload)
+}
+
+type stalwartWebhookPayload struct {
+	Events []stalwartWebhookEvent `json:"events"`
+}
+
+type stalwartWebhookEvent struct {
+	ID        string         `json:"id"`
+	CreatedAt string         `json:"createdAt"`
+	Type      string         `json:"type"`
+	Data      map[string]any `json:"data"`
+}
+
+func decodeStalwartWebhookEvents(body []byte) ([]stalwartWebhookEvent, error) {
+	var payload stalwartWebhookPayload
+	if err := json.Unmarshal(body, &payload); err == nil && len(payload.Events) > 0 {
+		return payload.Events, nil
+	}
+
+	var events []stalwartWebhookEvent
+	if err := json.Unmarshal(body, &events); err == nil && len(events) > 0 {
+		return events, nil
+	}
+
+	var event stalwartWebhookEvent
+	if err := json.Unmarshal(body, &event); err != nil {
+		return nil, err
+	}
+	if event.Type == "" {
+		return nil, errors.New("webhook payload missing events")
+	}
+	return []stalwartWebhookEvent{event}, nil
+}
+
+func isLocalEmail(email, domain string) (string, bool) {
+	email = strings.Trim(strings.TrimSpace(email), "<>\"'")
+	email = strings.TrimSuffix(email, ".")
+	lower := strings.ToLower(email)
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	if domain == "" || !strings.HasSuffix(lower, "@"+domain) {
+		return "", false
+	}
+	local, _, ok := strings.Cut(lower, "@")
+	if !ok || local == "" {
+		return "", false
+	}
+	return lower, true
+}
+
+func normalizedWebhookKey(key string) string {
+	k := strings.ToLower(strings.TrimSpace(key))
+	for _, old := range []string{"_", "-", ".", " "} {
+		k = strings.ReplaceAll(k, old, "")
+	}
+	return k
+}
+
+func pathHasRecipientRole(path []string) bool {
+	for _, key := range path {
+		switch normalizedWebhookKey(key) {
+		case "to",
+			"tos",
+			"recipient",
+			"recipients",
+			"rcpt",
+			"rcptto",
+			"deliveredto",
+			"envelopeto",
+			"finalrecipient",
+			"originalrecipient":
+			return true
+		}
+	}
+	return false
+}
+
+func pathHasBlockedMailRole(path []string) bool {
+	for _, key := range path {
+		k := normalizedWebhookKey(key)
+		if strings.Contains(k, "from") ||
+			strings.Contains(k, "sender") ||
+			strings.Contains(k, "returnpath") ||
+			strings.Contains(k, "mailfrom") ||
+			strings.Contains(k, "authenticated") {
+			return true
+		}
+	}
+	return false
+}
+
+func appendUniqueEmail(out []string, email string) []string {
+	for _, existing := range out {
+		if existing == email {
+			return out
+		}
+	}
+	return append(out, email)
+}
+
+func extractLocalEmailsFromWebhookData(data map[string]any, domain string) []string {
+	var recipients []string
+
+	var walk func(any, []string)
+	walk = func(v any, path []string) {
+		switch t := v.(type) {
+		case map[string]any:
+			for k, child := range t {
+				walk(child, append(path, k))
+			}
+		case []any:
+			for _, child := range t {
+				walk(child, path)
+			}
+		case string:
+			matches := emailAddressRe.FindAllString(t, -1)
+			for _, match := range matches {
+				email, ok := isLocalEmail(match, domain)
+				if !ok || pathHasBlockedMailRole(path) {
+					continue
+				}
+				if pathHasRecipientRole(path) {
+					recipients = appendUniqueEmail(recipients, email)
+				}
+			}
+		}
+	}
+	walk(data, nil)
+
+	return recipients
+}
+
+func isAccountIdentifierKey(key string) bool {
+	k := normalizedWebhookKey(key)
+	return k == "accountid" || k == "accountname" || k == "account"
+}
+
+func extractAccountIdentifiersFromWebhookData(data map[string]any) []string {
+	var identifiers []string
+
+	var walk func(any, []string)
+	walk = func(v any, path []string) {
+		switch t := v.(type) {
+		case map[string]any:
+			for k, child := range t {
+				walk(child, append(path, k))
+			}
+		case []any:
+			for _, child := range t {
+				walk(child, path)
+			}
+		default:
+			if len(path) == 0 || pathHasBlockedMailRole(path) || !isAccountIdentifierKey(path[len(path)-1]) {
+				return
+			}
+			id := strings.TrimSpace(idToString(t))
+			if id != "" {
+				identifiers = uniqueNonEmpty(append(identifiers, id)...)
+			}
+		}
+	}
+	walk(data, nil)
+
+	return identifiers
+}
+
+func (s *server) localRecipientsForWebhookEvent(ev stalwartWebhookEvent) []string {
+	recipients := extractLocalEmailsFromWebhookData(ev.Data, s.cfg.Domain)
+	if len(recipients) > 0 {
+		return recipients
+	}
+
+	for _, identifier := range extractAccountIdentifiersFromWebhookData(ev.Data) {
+		emails, err := s.stalwart.findPrincipalEmailsByIdentifier(identifier)
+		if err != nil {
+			log.Printf("[email-glue] mail push principal lookup failed for account %q: %v", identifier, err)
+			continue
+		}
+		for _, email := range emails {
+			if local, ok := isLocalEmail(email, s.cfg.Domain); ok {
+				recipients = appendUniqueEmail(recipients, local)
+			}
+		}
+	}
+
+	return recipients
+}
+
+func escapeXMLText(s string) string {
+	var b bytes.Buffer
+	_ = xml.EscapeText(&b, []byte(s))
+	return b.String()
+}
+
+func mailPushStanzaID(eventID, recipient string) string {
+	base := strings.TrimSpace(eventID)
+	if base == "" {
+		base = fmt.Sprintf("%s-%d", recipient, time.Now().UnixNano())
+	}
+
+	var b strings.Builder
+	b.WriteString("mailpush-")
+	for _, r := range base {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '-', r == '_', r == '.':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+		if b.Len() >= 96 {
+			break
+		}
+	}
+	return b.String()
+}
+
+var mailPushHTTPClient = &http.Client{Timeout: 5 * time.Second}
+
+func ejabberdCommandValueOK(v any) (bool, bool) {
+	switch t := v.(type) {
+	case nil:
+		return false, false
+	case bool:
+		return t, true
+	case float64:
+		return t == 0, true
+	case json.Number:
+		i, err := t.Int64()
+		if err == nil {
+			return i == 0, true
+		}
+		f, err := t.Float64()
+		if err == nil {
+			return f == 0, true
+		}
+		return false, false
+	case string:
+		switch strings.ToLower(strings.TrimSpace(t)) {
+		case "0", "ok", "success", "succeeded", "true":
+			return true, true
+		case "1", "error", "failed", "failure", "false":
+			return false, true
+		default:
+			return false, false
+		}
+	case map[string]any:
+		if errValue, ok := t["error"]; ok && errValue != nil {
+			if okValue, known := ejabberdCommandValueOK(errValue); known {
+				return okValue, true
+			}
+			if strings.TrimSpace(fmt.Sprint(errValue)) != "" {
+				return false, true
+			}
+		}
+		for _, key := range []string{"result", "res", "status", "code"} {
+			if value, ok := t[key]; ok {
+				return ejabberdCommandValueOK(value)
+			}
+		}
+	}
+	return false, false
+}
+
+func checkEjabberdCommandResponse(status int, body []byte) error {
+	body = bytes.TrimSpace(body)
+	if status < 200 || status >= 300 {
+		return fmt.Errorf("ejabberd send_stanza http %d: %s", status, string(body))
+	}
+	if len(body) == 0 {
+		return nil
+	}
+
+	var decoded any
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
+	if err := dec.Decode(&decoded); err != nil {
+		return fmt.Errorf("ejabberd send_stanza bad response: %s", string(body))
+	}
+	if ok, known := ejabberdCommandValueOK(decoded); known {
+		if ok {
+			return nil
+		}
+		return fmt.Errorf("ejabberd send_stanza command failed: %s", string(body))
+	}
+	return fmt.Errorf("ejabberd send_stanza unknown response: %s", string(body))
+}
+
+func (s *server) sendMailPushStanza(ctx context.Context, recipient, eventID string) error {
+	id := mailPushStanzaID(eventID, recipient)
+	stanza := fmt.Sprintf(
+		"<message type='headline' id='%s'><body>New email</body><x xmlns='urn:axichat:mail-push:0'/><no-store xmlns='urn:xmpp:hints'/><no-copy xmlns='urn:xmpp:hints'/></message>",
+		escapeXMLText(id),
+	)
+
+	payload := map[string]any{
+		"from":   s.cfg.MailNotifyJID,
+		"to":     recipient,
+		"stanza": stanza,
+	}
+	b, _ := json.Marshal(payload)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.cfg.EjabberdAPIBase+"/send_stanza", bytes.NewReader(b))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := mailPushHTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	return checkEjabberdCommandResponse(resp.StatusCode, body)
+}
+
+func (s *server) acceptedMailPushEventTypes() []string {
+	if s.cfg != nil && len(s.cfg.MailPushEventTypes) > 0 {
+		return s.cfg.MailPushEventTypes
+	}
+	return []string{"message-ingest.ham"}
+}
+
+func (s *server) acceptsMailPushEventType(eventType string) bool {
+	for _, accepted := range s.acceptedMailPushEventTypes() {
+		if eventType == accepted {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *server) stalwartEventsHook(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.cfg.MailPush {
+		http.NotFound(w, r)
+		return
+	}
+	if !s.checkStalwartHookToken(r) {
+		s.writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		log.Printf("[email-glue] stalwart events hook read error: %v", err)
+		s.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+
+	events, err := decodeStalwartWebhookEvents(body)
+	if err != nil {
+		log.Printf("[email-glue] stalwart events hook bad json: %v", err)
+		s.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+
+	eventTypes := make([]string, 0, len(events))
+	for _, ev := range events {
+		eventTypes = append(eventTypes, ev.Type)
+	}
+	log.Printf(
+		"[email-glue] stalwart events hook received events=%d types=%s accepted=%s",
+		len(events),
+		strings.Join(uniqueNonEmpty(eventTypes...), ","),
+		strings.Join(s.acceptedMailPushEventTypes(), ","),
+	)
+
+	sent := 0
+	for _, ev := range events {
+		if !s.acceptsMailPushEventType(ev.Type) {
+			log.Printf("[email-glue] mail push ignored event %q type=%q", ev.ID, ev.Type)
+			continue
+		}
+		recipients := s.localRecipientsForWebhookEvent(ev)
+		if len(recipients) == 0 {
+			log.Printf("[email-glue] mail push event %q type=%q has no local recipient", ev.ID, ev.Type)
+			continue
+		}
+		eventSent := 0
+		for _, recipient := range recipients {
+			ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+			err := s.sendMailPushStanza(ctx, recipient, ev.ID)
+			cancel()
+			if err != nil {
+				log.Printf("[email-glue] mail push send failed for %s event %q type=%q: %v", recipient, ev.ID, ev.Type, err)
+				continue
+			}
+			eventSent++
+			sent++
+		}
+		log.Printf("[email-glue] mail push event %q type=%q recipients=%d sent=%d", ev.ID, ev.Type, len(recipients), eventSent)
+	}
+
+	s.writeJSON(w, http.StatusOK, map[string]any{"ok": true, "sent": sent})
 }
 
 func (s *server) signup(w http.ResponseWriter, r *http.Request) {
@@ -1225,8 +1714,11 @@ func withMiddleware(srv *server, h http.Handler) http.Handler {
 			return
 		}
 
-		// Optional public token gate for all endpoints (including /health).
-		if srv.cfg.RequireClientToken && !srv.checkClientToken(r) {
+		// Optional public token gate for client endpoints. Stalwart hooks use
+		// their own bearer token because they are called server-to-server.
+		if srv.cfg.RequireClientToken &&
+			!strings.HasPrefix(r.URL.Path, "/hooks/stalwart/") &&
+			!srv.checkClientToken(r) {
 			srv.writeJSON(w, 401, map[string]any{"error": "unauthorized"})
 			return
 		}
@@ -1281,6 +1773,8 @@ func main() {
 	mux.HandleFunc("/account/", srv.deleteAccount)
 	mux.HandleFunc("/password", srv.changePassword)
 	mux.HandleFunc("/password/", srv.changePassword)
+	mux.HandleFunc("/hooks/stalwart/events", srv.stalwartEventsHook)
+	mux.HandleFunc("/hooks/stalwart/events/", srv.stalwartEventsHook)
 
 	h := withMiddleware(srv, mux)
 

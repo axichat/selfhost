@@ -9,6 +9,7 @@ STATE_JSON="${STATE_DIR}/state.json"
 LOCK_FILE="${AXICHAT_SELFHOST_LOCK_FILE:-/run/lock/axichat-selfhost.lock}"
 EMAIL_GLUE_ENV_FILE="/etc/sysconfig/email-glue"
 CLIENT_TOKEN_FILE="/root/stalwart-secrets/client_token.txt"
+STALWART_HOOK_TOKEN_FILE="/root/stalwart-secrets/stalwart_hook_token.txt"
 
 SCHEMA_VERSION=1
 CURRENT_PHASE=""
@@ -275,6 +276,34 @@ upsert_env_var_file() {
   chmod 0600 "$tmp"
   mv "$tmp" "$file"
   chmod 0600 "$file"
+}
+
+read_env_file_var() {
+  local file="$1"
+  local key="$2"
+  local line value
+  [[ -f "$file" ]] || return 1
+  line="$(grep -E "^${key}=" "$file" | tail -n1 || true)"
+  [[ -n "$line" ]] || return 1
+  value="${line#*=}"
+  value="${value%\"}"
+  value="${value#\"}"
+  value="${value%\'}"
+  value="${value#\'}"
+  printf '%s\n' "$value"
+}
+
+mail_push_runtime_enabled() {
+  local value
+  value="$(read_env_file_var "$EMAIL_GLUE_ENV_FILE" "EMAIL_GLUE_MAIL_PUSH" || true)"
+  case "${value,,}" in
+    1|true|yes|on)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 email_glue_service_installed() {
@@ -625,6 +654,7 @@ run_preflight_phase() {
     info "Email stack is disabled (--no-email)"
   else
     info "Email stack is enabled; your chosen public token was saved for later email-glue use"
+    info "Android mail notifications will be enabled by default through a Stalwart webhook checkpoint"
   fi
   info "If this install needs browser, DNS, or PTR work, it will stop at that exact step and wait there"
   info "If anything interrupts the install, rerun the same install command"
@@ -691,6 +721,7 @@ run_stalwart_phase() {
   save_state
   section "Stalwart"
   info "Installing Stalwart and email-glue"
+  info "Android mail notifications are enabled by default through the Stalwart webhook"
   info "If browser work is needed, the install will stop at that exact step and wait for you"
 
   local args=("--public-token=${PUBLIC_TOKEN}")
@@ -705,9 +736,58 @@ run_stalwart_phase() {
   WEBADMIN_REMOTE_PORT="$WEBADMIN_REMOTE_PORT" \
   SKIP_FIREWALL="1" \
   SKIP_DNS_GUIDANCE="1" \
+  SKIP_MAIL_PUSH_GUIDANCE="1" \
   bash "$ROOT_DIR/stalwart/install.sh" "${args[@]}"
 
   append_completed_phase "stalwart_install"
+  save_state
+}
+
+run_stalwart_webhook_checkpoint() {
+  [[ "$NO_EMAIL" == "0" ]] || return 0
+  phase_completed "checkpoint_stalwart_webhook" && return 0
+  CURRENT_PHASE="checkpoint_stalwart_webhook"
+  save_state
+
+  section "Mail Notifications"
+
+  if ! mail_push_runtime_enabled; then
+    info "Mail hook notifications are disabled in ${EMAIL_GLUE_ENV_FILE}; skipping the webhook checkpoint"
+    append_completed_phase "checkpoint_stalwart_webhook"
+    save_state
+    return 0
+  fi
+
+  [[ -s "$STALWART_HOOK_TOKEN_FILE" ]] || die "missing Stalwart hook token file: ${STALWART_HOOK_TOKEN_FILE}"
+  local hook_token
+  hook_token="$(tr -d '\r\n' < "$STALWART_HOOK_TOKEN_FILE")"
+  [[ -n "$hook_token" ]] || die "Stalwart hook token file is empty: ${STALWART_HOOK_TOKEN_FILE}"
+
+  cat <<EOF
+
+Android mail notifications are enabled by default for this install.
+Create this Stalwart webhook so new mail events reach connected Android clients through XMPP:
+
+Path: Settings -> Telemetry -> Webhooks
+Name: anything, for example "Axichat mail notifications"
+URL: https://${DOMAIN}:8443/hooks/stalwart/events
+Method: POST
+HTTP headers: Authorization: Bearer ${hook_token}
+Events: message-ingest.ham
+Throttle: 1s
+Timeout: 5s
+Enable: true
+Allow invalid certs: false
+
+This sends:
+Authorization: Bearer ${hook_token}
+
+Token file: ${STALWART_HOOK_TOKEN_FILE}
+
+EOF
+
+  read -r -p "Press Enter after creating the Stalwart webhook in Webadmin..." _
+  append_completed_phase "checkpoint_stalwart_webhook"
   save_state
 }
 
@@ -820,6 +900,7 @@ advance_postinstall_checkpoints() {
     return
   fi
 
+  run_stalwart_webhook_checkpoint
   run_dns_checkpoint
   run_reverse_dns_checkpoint
 
@@ -873,12 +954,26 @@ continue_install_from_state() {
       run_stalwart_phase
       advance_postinstall_checkpoints
       ;;
+    checkpoint_stalwart_webhook)
+      run_stalwart_webhook_checkpoint
+      run_dns_checkpoint
+      run_reverse_dns_checkpoint
+      finalize_install
+      ;;
     checkpoint_dns_records)
+      if ! phase_completed "checkpoint_stalwart_webhook"; then
+        run_stalwart_phase
+      fi
+      run_stalwart_webhook_checkpoint
       run_dns_checkpoint
       run_reverse_dns_checkpoint
       finalize_install
       ;;
     checkpoint_reverse_dns)
+      if ! phase_completed "checkpoint_stalwart_webhook"; then
+        run_stalwart_phase
+      fi
+      run_stalwart_webhook_checkpoint
       run_reverse_dns_checkpoint
       advance_postinstall_checkpoints
       ;;
@@ -928,6 +1023,13 @@ Remove these if you intentionally want to start over:
 
     validate_install_args
     load_state
+    if [[ "$CURRENT_PHASE" == "complete" ]]; then
+      info "Install is already complete"
+      if [[ "$NO_EMAIL" == "0" ]]; then
+        info "To apply updated default features such as mail hook notifications, run: sudo bash ./install.sh upgrade"
+      fi
+      return 0
+    fi
     info "Continuing saved install from phase ${CURRENT_PHASE}"
     save_config
     continue_install_from_state
@@ -971,6 +1073,7 @@ Rerun the same install command again instead."
       finalize_install
     else
       run_stalwart_phase
+      run_stalwart_webhook_checkpoint
       finalize_install
     fi
   ); then
@@ -1006,6 +1109,63 @@ check_http() {
   return 1
 }
 
+check_http_status() {
+  local label="$1"
+  local want="$2"
+  local url="$3"
+  shift 3
+  local got
+  got="$(curl -sk -o /dev/null -w '%{http_code}' "$@" "$url" 2>/dev/null || true)"
+  if [[ "$got" == "$want" ]]; then
+    printf 'PASS: %s\n' "$label"
+    return 0
+  fi
+  printf 'FAIL: %s (http %s, want %s)\n' "$label" "${got:-none}" "$want"
+  return 1
+}
+
+check_mail_push_hook() {
+  local hook_token
+  local mail_push
+  local probe_body='{"id":"verify-mail-push-route","type":"message-ingest.ham","data":{}}'
+
+  mail_push="$(read_env_file_var "$EMAIL_GLUE_ENV_FILE" "EMAIL_GLUE_MAIL_PUSH" || true)"
+  case "${mail_push,,}" in
+    1|true|yes|on)
+      printf 'PASS: email-glue mail push is enabled\n'
+      ;;
+    0|false|no|off)
+      printf 'PASS: email-glue mail push is disabled by configuration; skipping hook checks\n'
+      return 0
+      ;;
+    "")
+      printf 'FAIL: EMAIL_GLUE_MAIL_PUSH is missing in %s\n' "$EMAIL_GLUE_ENV_FILE"
+      return 1
+      ;;
+    *)
+      printf 'FAIL: EMAIL_GLUE_MAIL_PUSH has invalid value %s in %s\n' "$mail_push" "$EMAIL_GLUE_ENV_FILE"
+      return 1
+      ;;
+  esac
+
+  [[ -s "$STALWART_HOOK_TOKEN_FILE" ]] || {
+    printf 'FAIL: Stalwart hook token file is missing: %s\n' "$STALWART_HOOK_TOKEN_FILE"
+    return 1
+  }
+  hook_token="$(tr -d '\r\n' < "$STALWART_HOOK_TOKEN_FILE")"
+  [[ -n "$hook_token" ]] || {
+    printf 'FAIL: Stalwart hook token file is empty: %s\n' "$STALWART_HOOK_TOKEN_FILE"
+    return 1
+  }
+
+  check_http_status "Stalwart hook rejects unauthenticated requests" "401" "https://127.0.0.1:8443/hooks/stalwart/events" -X POST || return 1
+  check_http_status "Stalwart hook accepts bearer-authenticated requests" "200" "https://127.0.0.1:8443/hooks/stalwart/events" \
+    -X POST \
+    -H "Authorization: Bearer ${hook_token}" \
+    -H "Content-Type: application/json" \
+    -d "$probe_body" || return 1
+}
+
 cmd_verify() {
   need_root
   require_saved_install
@@ -1021,6 +1181,7 @@ cmd_verify() {
     check_active_service "email-glue.service" || failed=1
     check_http "Stalwart ready endpoint responds" "http://127.0.0.1:8080/healthz/ready" || failed=1
     check_http "email-glue health responds" "https://127.0.0.1:8443/health" -k -H "X-Client-Token: ${PUBLIC_TOKEN}" || failed=1
+    check_mail_push_hook || failed=1
   fi
 
   return "$failed"

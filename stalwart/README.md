@@ -44,6 +44,7 @@ Default behavior:
 - if you only pass bare `--public-token`, the component script reuses or generates a client token
 - reuses `/root/stalwart-secrets/glue_api_token.txt` when valid
 - otherwise pauses and tells you how to create the Stalwart Admin API key that `email-glue` uses
+- enables Android mail notifications through the Stalwart webhook unless explicitly disabled
 - waits in the same terminal for the Webadmin domain/API-key steps instead of exiting into a separate resume flow
 
 This manual/component script does not enforce the same UX as the root wrapper:
@@ -74,7 +75,7 @@ Recommended invocations:
 ## Flags
 
 ```bash
-./install.sh [--public-token[=TOKEN]] [--no-public-token] [--glue-api-token=TOKEN]
+./install.sh [--public-token[=TOKEN]] [--no-public-token] [--glue-api-token=TOKEN] [--no-mail-push]
 ```
 
 - `--public-token`
@@ -95,9 +96,17 @@ Recommended invocations:
   Without this flag, installer reuses `/root/stalwart-secrets/glue_api_token.txt` when valid.
   If the file is missing or invalid, the installer pauses and tells you how to create a new one in Webadmin.
 
+- `--mail-push`
+  Enables Stalwart webhook based Android mail notifications.
+  This is already the default and is mainly useful to override an environment or saved config value.
+
+- `--no-mail-push`
+  Disables Stalwart webhook based Android mail notifications.
+  Advanced operators can also set `EMAIL_GLUE_MAIL_PUSH=0`.
+
 ## Stalwart Webadmin token flow
 
-There are two different tokens in this setup:
+There are three different tokens in this setup:
 
 - Glue API token:
   This is the Stalwart Admin API key that `email-glue` uses to create/delete/change mail users.
@@ -109,6 +118,11 @@ There are two different tokens in this setup:
   It is stored at `/root/stalwart-secrets/client_token.txt`.
   In the direct component flow it is enabled by default and either reused or generated automatically.
   In the normal root-wrapper flow you are expected to choose it explicitly.
+
+- Stalwart hook token:
+  This is the bearer token Stalwart sends to `/hooks/stalwart/events`.
+  It is stored at `/root/stalwart-secrets/stalwart_hook_token.txt`.
+  It is separate from the public client token.
 
 If you need to create the glue API token manually, do this:
 
@@ -183,6 +197,11 @@ These affect the Webadmin tunnel instructions printed by `install.sh`:
 - `EMAIL_GLUE_REQUIRE_CLIENT_TOKEN`
 - `EMAIL_GLUE_CLIENT_TOKEN`
 - `EMAIL_GLUE_CLIENT_TOKEN_FILE`
+- `EMAIL_GLUE_MAIL_PUSH`
+- `EMAIL_GLUE_MAIL_PUSH_EVENT_TYPES`
+- `EMAIL_GLUE_EJABBERD_API`
+- `EMAIL_GLUE_MAIL_NOTIFY_JID`
+- `EMAIL_GLUE_STALWART_HOOK_TOKEN`
 
 Defaults used by the installer/runtime:
 
@@ -191,11 +210,38 @@ Defaults used by the installer/runtime:
 - `EMAIL_GLUE_LISTEN=0.0.0.0:8443`
 - `EMAIL_GLUE_CERT_FILE=/var/lib/stalwart/certs/$DOMAIN.fullchain.pem`
 - `EMAIL_GLUE_KEY_FILE=/var/lib/stalwart/certs/$DOMAIN.privkey.pem`
+- `EMAIL_GLUE_MAIL_PUSH=1`
+- `EMAIL_GLUE_MAIL_PUSH_EVENT_TYPES=message-ingest.ham`
+- `EMAIL_GLUE_EJABBERD_API=http://127.0.0.1:5281/api`
+- `EMAIL_GLUE_MAIL_NOTIFY_JID=mail-notify@$DOMAIN`
+
+## Android mail notifications
+
+Selfhost Android mail notifications are enabled by default for normal email installs. This setup does not use `fpush`, APNS, FCM, `mod_push`, or XEP-0357 push registration.
+
+These Webadmin instructions target the Stalwart image pinned by this repo, `stalwartlabs/stalwart:v0.15.4`.
+
+Create a Stalwart webhook in Webadmin:
+
+- Path: Settings -> Telemetry -> Webhooks
+- URL: `https://DOMAIN:8443/hooks/stalwart/events`
+- Method: `POST`
+- HTTP headers: `Authorization: Bearer TOKEN_FROM_/root/stalwart-secrets/stalwart_hook_token.txt`
+- Events: `message-ingest.ham`
+- Throttle: `1s`
+- Timeout: 5s
+- Enable: true
+- Allow invalid certs: false
+
+Stalwart posts the webhook to `email-glue`; `email-glue` sends an XMPP `headline` marker from `mail-notify@DOMAIN` through ejabberd's local `/api/send_stanza`. The stanza contains `<x xmlns='urn:axichat:mail-push:0'/>` and a generic `New email` body.
+
+Clients must treat this stanza as an email sync/local notification hint, not as a normal chat message. If Android has no live XMPP connection, this setup is not reliable native OS background push.
 
 ## Build and packaging note
 
 - This repo now ships bundled `email-glue` binaries for `linux/amd64` and `linux/arm64`.
 - `stalwart/install.sh` installs the bundled binary when one matches the server architecture.
+- If mail push is enabled and the bundled binary does not contain mail hook support, the installer falls back to a local Go build instead of deploying the stale binary.
 - On unsupported architectures, `stalwart/install.sh` falls back to installing `golang-go` and running `go build` on the target host.
 - If you are using the normal guided flow, the root wrapper still ends up using this same component behavior underneath.
 
@@ -211,6 +257,7 @@ Defaults used by the installer/runtime:
 
 - `/root/stalwart-secrets/fallback_admin_password.txt`
 - `/root/stalwart-secrets/glue_api_token.txt`
+- `/root/stalwart-secrets/stalwart_hook_token.txt` when mail push is enabled
 - `/root/stalwart-secrets/client_token.txt` when the public token is enabled
 - `/etc/sysconfig/email-glue`
 
@@ -221,9 +268,18 @@ systemctl status stalwart.service --no-pager
 systemctl status email-glue.service --no-pager
 curl -fsS http://127.0.0.1:8080/healthz/ready
 curl -sk -H "X-Client-Token: $(sudo cat /root/stalwart-secrets/client_token.txt)" https://127.0.0.1:8443/health
+curl -sk -X POST https://127.0.0.1:8443/hooks/stalwart/events
 ```
 
 If you ran `./install.sh --no-public-token`, omit the `X-Client-Token` header on the `8443` check.
+The unauthenticated hook request should return `401`; that means the route exists and requires the Stalwart bearer token.
+
+Useful logs:
+
+```bash
+journalctl -u email-glue.service -b --no-pager | tail -n 200
+journalctl -u ejabberd -b --no-pager | tail -n 200
+```
 
 ## Notes
 

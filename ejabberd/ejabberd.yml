@@ -106,6 +106,15 @@ api_permissions:
       - "!stop"
       - "!start"
 
+  "email-glue local API":
+    from:
+      - mod_http_api
+    who:
+      ip: 127.0.0.1/8
+    what:
+      - send_stanza
+      - status
+
   "public commands":
     who:
       ip: 127.0.0.1/8

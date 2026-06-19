@@ -120,4 +120,5 @@ Do not expose `5280/tcp` publicly. It is only for the local ACME handler behind 
 
 - Federation is enabled by `s2s_access: all` and port 5269.
 - Stalwart reuses the ejabberd ACME cert via the cert sync script.
+- `mod_http_api` is exposed only on loopback at `127.0.0.1:5281`; `email-glue` uses that local API to send Android mail notification marker stanzas with `send_stanza`.
 - This setup keeps message history by default. There is no automatic MAM purge timer.
