@@ -152,15 +152,6 @@ if [[ ! -s "$SERVER_PEM" ]]; then
   die "Missing TLS keypair file: ${SERVER_PEM}"
 fi
 
-if [[ -n "${TURN_IPV4:-}" ]]; then
-  echo "TURN public IPv4: ${TURN_IPV4} (preconfigured)"
-else
-  TURN_IPV4="$(curl -4 -fsS https://api.ipify.org || true)"
-fi
-if [[ -z "$TURN_IPV4" ]]; then
-  read -r -p "Public IPv4 for TURN (optional; leave blank to disable TURN): " TURN_IPV4
-fi
-
 TMP_CFG="$(mktemp)"
 cp -f "$CFG_SRC" "$TMP_CFG"
 
@@ -182,7 +173,7 @@ if grep -q "@HOST@" "$TMP_CFG"; then
   die "Template substitution failed for @HOST@."
 fi
 
-if [[ -n "$TURN_IPV4" ]]; then
+if [[ -n "${TURN_IPV4:-}" ]]; then
   sed -i -e "s|__TURN_IPV4__|$TURN_IPV4|g" "$TMP_CFG"
 else
   sed -i -e 's/^    use_turn: true$/    use_turn: false/' "$TMP_CFG"
@@ -229,7 +220,6 @@ elif command -v ufw >/dev/null 2>&1; then
     ufw allow 5269/tcp >/dev/null 2>&1 || true
     ufw allow 5443/tcp >/dev/null 2>&1 || true
     ufw allow 80/tcp >/dev/null 2>&1 || true
-    ufw allow 3478/udp >/dev/null 2>&1 || true
     ufw reload >/dev/null 2>&1 || true
     echo "Added app-specific ufw rules."
   fi
@@ -291,7 +281,9 @@ echo "  - 5269/tcp  (server-to-server federation)"
 echo "  - 5443/tcp  (web admin, websockets, upload, captcha, web registration)"
 echo "  - 5280/tcp  (internal-only HTTP for ACME challenge; do not expose it publicly)"
 echo "  - 80/tcp    (must be open for ACME HTTP-01)"
-echo "  - 3478/udp  (STUN/TURN)"
+if [[ -n "${TURN_IPV4:-}" ]]; then
+  echo "  - 3478/udp  (relay)"
+fi
 echo
 echo "Local-only:"
 echo "  - 5281/tcp  (HTTP API on 127.0.0.1)"

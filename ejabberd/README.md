@@ -25,8 +25,9 @@ This README is only for direct/manual ejabberd work. This folder has the compone
 
 - Required env: `DOMAIN=example.com`
 - Optional env: `EJABBERD_VERSION_PREFIX=26.` to pin the apt version prefix
-- Optional env: `TURN_IPV4=1.2.3.4` to pre-answer the TURN IP prompt
-- Interactive prompt: TURN public IPv4 if auto-detection fails
+- Optional env: `TURN_IPV4=1.2.3.4` for direct/manual relay work.
+- Normal root-wrapper installs leave relay disabled for now.
+- The component script does not prompt for TURN.
 
 ## Manual install outline
 
@@ -58,7 +59,8 @@ chmod 750 /opt/ejabberd/database /var/www/upload
 3. Prepare the config and place it in `/opt/ejabberd/conf/ejabberd.yml`.
 
 - Copy `ejabberd.yml` from this directory.
-- Replace `__TURN_IPV4__` (or disable TURN if you do not have a public IP).
+- Replace `__TURN_IPV4__` if you are intentionally enabling relay support.
+- Otherwise set `use_turn: false` and remove `turn_ipv4_address`.
 - Set `captcha_cmd` to the installed path, typically `/opt/ejabberd-*/lib/captcha.sh`.
 
 4. Enable and start ejabberd.
@@ -86,9 +88,10 @@ ufw allow 5223/tcp
 ufw allow 5269/tcp
 ufw allow 5443/tcp
 ufw allow 80/tcp
-ufw allow 3478/udp
 ufw reload
 ```
+
+Only add `3478/udp` if you intentionally enabled relay support.
 
 If UFW is inactive or not installed, this repo does not enable or configure it for you. Open the same ports using your existing firewall approach.
 
@@ -112,7 +115,10 @@ systemctl restart ejabberd
 - 5269/tcp (server-to-server federation)
 - 5443/tcp (web admin, websockets, upload, captcha)
 - 80/tcp (ACME)
-- 3478/udp (STUN/TURN)
+
+Only if you intentionally enabled relay support:
+
+- 3478/udp
 
 Do not expose `5280/tcp` publicly. It is only for the local ACME handler behind the bundled port-80 forwarder.
 

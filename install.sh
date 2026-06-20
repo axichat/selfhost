@@ -18,7 +18,8 @@ DOMAIN=""
 NO_EMAIL="0"
 PUBLIC_TOKEN=""
 GLUE_API_TOKEN=""
-TURN_PUBLIC_IP=""
+# Reserved for future TURN support. Empty means the normal guided installer keeps relay disabled.
+TURN_PUBLIC_IP="${AXICHAT_SELFHOST_TURN_PUBLIC_IP:-}"
 STALWART_SSH_HOST=""
 STALWART_SSH_USER="root"
 TUNNEL_LOCAL_PORT="18080"
@@ -29,7 +30,6 @@ ARG_DOMAIN_SET="0"
 ARG_PUBLIC_TOKEN_SET="0"
 ARG_GLUE_API_TOKEN_SET="0"
 ARG_NO_EMAIL_SET="0"
-ARG_TURN_PUBLIC_IP_SET="0"
 ARG_STALWART_SSH_HOST_SET="0"
 ARG_STALWART_SSH_USER_SET="0"
 ARG_TUNNEL_LOCAL_PORT_SET="0"
@@ -65,10 +65,9 @@ same "install" command and it will continue from the saved phase.
 Install options:
   --domain DOMAIN                 Required.
   --public-token TOKEN            Required unless --no-email is set.
-                                  Shared email-glue client token, not an admin password.
-  --no-email                      Skip Stalwart and email-glue.
+                                  Shared Axichat client token, not an admin password.
+  --no-email                      Skip email.
   --glue-api-token TOKEN          Optional at install time.
-  --turn-public-ip IP             Pre-answer the ejabberd installer TURN IP prompt.
   --stalwart-ssh-host HOST        Host shown in the Webadmin tunnel instructions.
   --stalwart-ssh-user USER        SSH user shown in the Webadmin tunnel instructions.
   --tunnel-local-port PORT        Local port used in SSH tunnel instructions.
@@ -328,11 +327,10 @@ validate_install_matches_saved_config() {
   local cli_no_email="$2"
   local cli_public_token="$3"
   local cli_glue_api_token="$4"
-  local cli_turn_public_ip="$5"
-  local cli_stalwart_ssh_host="$6"
-  local cli_stalwart_ssh_user="$7"
-  local cli_tunnel_local_port="$8"
-  local cli_webadmin_remote_port="$9"
+  local cli_stalwart_ssh_host="$5"
+  local cli_stalwart_ssh_user="$6"
+  local cli_tunnel_local_port="$7"
+  local cli_webadmin_remote_port="$8"
 
   if [[ "$ARG_DOMAIN_SET" == "1" && "$cli_domain" != "$DOMAIN" ]]; then
     die "a saved install already exists for domain ${DOMAIN}, not ${cli_domain}.
@@ -343,7 +341,6 @@ If you intentionally want to start over from scratch, remove:
   fi
   [[ "$ARG_NO_EMAIL_SET" != "1" || "$cli_no_email" == "$NO_EMAIL" ]] || die "the saved install mode does not match this command"
   [[ "$ARG_PUBLIC_TOKEN_SET" != "1" || "$cli_public_token" == "$PUBLIC_TOKEN" ]] || die "the saved public token does not match this command"
-  [[ "$ARG_TURN_PUBLIC_IP_SET" != "1" || "$cli_turn_public_ip" == "$TURN_PUBLIC_IP" ]] || die "the saved TURN public IP does not match this command"
   [[ "$ARG_STALWART_SSH_HOST_SET" != "1" || "$cli_stalwart_ssh_host" == "$STALWART_SSH_HOST" ]] || die "the saved Stalwart SSH host does not match this command"
   [[ "$ARG_STALWART_SSH_USER_SET" != "1" || "$cli_stalwart_ssh_user" == "$STALWART_SSH_USER" ]] || die "the saved Stalwart SSH user does not match this command"
   [[ "$ARG_TUNNEL_LOCAL_PORT_SET" != "1" || "$cli_tunnel_local_port" == "$TUNNEL_LOCAL_PORT" ]] || die "the saved tunnel local port does not match this command"
@@ -385,19 +382,22 @@ EOF
 
   if [[ "$NO_EMAIL" == "0" ]]; then
     cat <<'EOF'
-The public token is not your admin password. It is the shared token people will later use when talking to email-glue.
+The public token is not your admin password. It is the shared token people will enter when signing up in Axichat.
 EOF
   fi
 }
 
 apply_firewall_rules() {
   local ports_tcp=(5222 5223 5269 5443 80)
-  local ports_udp=(3478)
+  local ports_udp=()
   local port
   local ufw_active="yes"
 
   if [[ "$NO_EMAIL" == "0" ]]; then
     ports_tcp+=(25 465 587 993 8443)
+  fi
+  if [[ -n "$TURN_PUBLIC_IP" ]]; then
+    ports_udp+=(3478)
   fi
 
   if ! command -v ufw >/dev/null 2>&1; then
@@ -431,11 +431,14 @@ run_preflight_checks() {
   local mode="${1:-install}"
   local failed=0
   local tcp_ports=(80 5222 5223 5269 5443)
-  local udp_ports=(3478)
+  local udp_ports=()
   local port
 
   if [[ "$NO_EMAIL" == "0" ]]; then
     tcp_ports+=(25 465 587 993 8443 8080)
+  fi
+  if [[ -n "$TURN_PUBLIC_IP" ]]; then
+    udp_ports+=(3478)
   fi
 
   if ! domain_looks_plausible "$DOMAIN"; then
@@ -519,7 +522,7 @@ Examples:
   [[ "$DOMAIN" != *$'\n'* ]] || die "--domain must be single-line"
   [[ "$PUBLIC_TOKEN" != *$'\n'* ]] || die "--public-token must be single-line"
   [[ "$GLUE_API_TOKEN" != *$'\n'* ]] || die "--glue-api-token must be single-line"
-  [[ "$TURN_PUBLIC_IP" != *$'\n'* ]] || die "--turn-public-ip must be single-line"
+  [[ "$TURN_PUBLIC_IP" != *$'\n'* ]] || die "internal TURN public IP must be single-line"
   [[ "$TUNNEL_LOCAL_PORT" =~ ^[0-9]+$ ]] || die "--tunnel-local-port must be numeric"
   [[ "$WEBADMIN_REMOTE_PORT" =~ ^[0-9]+$ ]] || die "--webadmin-remote-port must be numeric"
 
@@ -571,17 +574,6 @@ parse_install_args() {
       --no-email)
         NO_EMAIL="1"
         ARG_NO_EMAIL_SET="1"
-        shift
-        ;;
-      --turn-public-ip)
-        [[ $# -ge 2 ]] || die "--turn-public-ip requires a value"
-        TURN_PUBLIC_IP="$2"
-        ARG_TURN_PUBLIC_IP_SET="1"
-        shift 2
-        ;;
-      --turn-public-ip=*)
-        TURN_PUBLIC_IP="${1#*=}"
-        ARG_TURN_PUBLIC_IP_SET="1"
         shift
         ;;
       --stalwart-ssh-host)
@@ -653,7 +645,7 @@ run_preflight_phase() {
   if [[ "$NO_EMAIL" == "1" ]]; then
     info "Email stack is disabled (--no-email)"
   else
-    info "Email stack is enabled; your chosen public token was saved for later email-glue use"
+    info "Email stack is enabled; your chosen public token was saved for Axichat signups"
     info "Android mail notifications will be enabled by default through a Stalwart webhook checkpoint"
   fi
   info "If this install needs browser, DNS, or PTR work, it will stop at that exact step and wait there"
@@ -693,11 +685,6 @@ run_ejabberd_phase() {
   section "ejabberd"
   info "Installing ejabberd"
   info "ejabberd will ask you to choose the XMPP admin password"
-  if [[ -n "$TURN_PUBLIC_IP" ]]; then
-    info "TURN public IPv4 was preconfigured as ${TURN_PUBLIC_IP}"
-  else
-    info "If TURN auto-detection fails, the ejabberd installer may ask for the server's public IPv4"
-  fi
 
   local -a env_args
   env_args=("DOMAIN=$DOMAIN" "SKIP_FIREWALL=1")
@@ -720,7 +707,7 @@ run_stalwart_phase() {
   CURRENT_PHASE="stalwart_install"
   save_state
   section "Stalwart"
-  info "Installing Stalwart and email-glue"
+  info "Installing Stalwart email services"
   info "Android mail notifications are enabled by default through the Stalwart webhook"
   info "If browser work is needed, the install will stop at that exact step and wait for you"
 
@@ -752,7 +739,7 @@ run_stalwart_webhook_checkpoint() {
   section "Mail Notifications"
 
   if ! mail_push_runtime_enabled; then
-    info "Mail hook notifications are disabled in ${EMAIL_GLUE_ENV_FILE}; skipping the webhook checkpoint"
+    info "Mail notifications are disabled in ${EMAIL_GLUE_ENV_FILE}; skipping the webhook checkpoint"
     append_completed_phase "checkpoint_stalwart_webhook"
     save_state
     return 0
@@ -1003,7 +990,6 @@ Remove these if you intentionally want to start over:
     local cli_no_email="$NO_EMAIL"
     local cli_public_token="$PUBLIC_TOKEN"
     local cli_glue_api_token="$GLUE_API_TOKEN"
-    local cli_turn_public_ip="$TURN_PUBLIC_IP"
     local cli_stalwart_ssh_host="$STALWART_SSH_HOST"
     local cli_stalwart_ssh_user="$STALWART_SSH_USER"
     local cli_tunnel_local_port="$TUNNEL_LOCAL_PORT"
@@ -1015,7 +1001,6 @@ Remove these if you intentionally want to start over:
       "$cli_no_email" \
       "$cli_public_token" \
       "$cli_glue_api_token" \
-      "$cli_turn_public_ip" \
       "$cli_stalwart_ssh_host" \
       "$cli_stalwart_ssh_user" \
       "$cli_tunnel_local_port" \
@@ -1026,7 +1011,7 @@ Remove these if you intentionally want to start over:
     if [[ "$CURRENT_PHASE" == "complete" ]]; then
       info "Install is already complete"
       if [[ "$NO_EMAIL" == "0" ]]; then
-        info "To apply updated default features such as mail hook notifications, run: sudo bash ./install.sh upgrade"
+        info "To apply updated default features such as mail notifications, run: sudo bash ./install.sh upgrade"
       fi
       return 0
     fi
@@ -1089,11 +1074,12 @@ Rerun the same install command again instead."
 }
 check_active_service() {
   local svc="$1"
+  local label="${2:-service ${svc}}"
   if systemctl is-active --quiet "$svc"; then
-    printf 'PASS: service %s is active\n' "$svc"
+    printf 'PASS: %s is active\n' "$label"
     return 0
   fi
-  printf 'FAIL: service %s is not active\n' "$svc"
+  printf 'FAIL: %s is not active\n' "$label"
   return 1
 }
 
@@ -1132,10 +1118,10 @@ check_mail_push_hook() {
   mail_push="$(read_env_file_var "$EMAIL_GLUE_ENV_FILE" "EMAIL_GLUE_MAIL_PUSH" || true)"
   case "${mail_push,,}" in
     1|true|yes|on)
-      printf 'PASS: email-glue mail push is enabled\n'
+      printf 'PASS: Android mail notifications are enabled\n'
       ;;
     0|false|no|off)
-      printf 'PASS: email-glue mail push is disabled by configuration; skipping hook checks\n'
+      printf 'PASS: Android mail notifications are disabled by configuration; skipping hook checks\n'
       return 0
       ;;
     "")
@@ -1173,14 +1159,14 @@ cmd_verify() {
 
   local failed=0
 
-  check_active_service "ejabberd" || failed=1
+  check_active_service "ejabberd" "XMPP service" || failed=1
   check_http "ejabberd local API responds" "http://127.0.0.1:5281/api/status" -X POST -H "Content-Type: application/json" -d '{}' || failed=1
 
   if [[ "$NO_EMAIL" == "0" ]]; then
-    check_active_service "stalwart.service" || failed=1
-    check_active_service "email-glue.service" || failed=1
+    check_active_service "stalwart.service" "email server" || failed=1
+    check_active_service "email-glue.service" "Axichat email service" || failed=1
     check_http "Stalwart ready endpoint responds" "http://127.0.0.1:8080/healthz/ready" || failed=1
-    check_http "email-glue health responds" "https://127.0.0.1:8443/health" -k -H "X-Client-Token: ${PUBLIC_TOKEN}" || failed=1
+    check_http "Axichat email service health responds" "https://127.0.0.1:8443/health" -k -H "X-Client-Token: ${PUBLIC_TOKEN}" || failed=1
     check_mail_push_hook || failed=1
   fi
 
@@ -1196,7 +1182,7 @@ Usage:
 Notes:
   - only available for normal installs with email enabled
   - show prints the current saved token
-  - set updates the saved config, syncs email-glue, and restarts email-glue when installed
+  - set updates the saved config and restarts the Axichat email service when installed
 EOF
 }
 
@@ -1253,17 +1239,17 @@ cmd_public_token_set() {
 
     if email_glue_service_installed; then
       systemctl restart email-glue.service
-      info "Updated public token and restarted email-glue.service"
+      info "Updated public token and restarted the Axichat email service"
     else
       info "Updated public token in saved config and runtime files"
-      info "email-glue.service is not installed yet; rerun the same install command to continue"
+      info "The Axichat email service is not installed yet; rerun the same install command to continue"
     fi
     printf 'Public token: %s\n' "$PUBLIC_TOKEN"
     return 0
   fi
 
   info "Updated public token in saved config"
-  info "email-glue is not installed yet; rerun the same install command to apply it"
+  info "The Axichat email service is not installed yet; rerun the same install command to apply it"
   printf 'Public token: %s\n' "$PUBLIC_TOKEN"
 }
 

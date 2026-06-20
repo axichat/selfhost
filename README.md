@@ -1,221 +1,202 @@
 ![Axichat banner](https://axichat.github.io/axichat/readme-media/axichat_banner.png)
 
-* * *
+# Axichat Self-Host
 
-# Self-Hosting Quick Start
+- All you have to do is get a Debian VPS, point your domain at it, and run the installer.
+- The installer does the server work.
+- When it needs something outside the server, it tells you exactly what to do.
+- If anything gets interrupted, just run the same command again.
+- It continues where it left off.
 
-This directory installs the Axichat self-host stack on your Debian server.
+## Watch First
 
-The main entry point is [`install.sh`](install.sh) in the repo root.
-You should not need prior ejabberd or Stalwart knowledge; the script pauses and tells you exactly what to do.
-[`ejabberd/README.md`](ejabberd/README.md) and [`stalwart/README.md`](stalwart/README.md) are advanced/manual documents for troubleshooting.
+- Watch the self-host tutorial before you start:
 
-## Why Self-Host
+  <p align="center">
+    <a href="https://youtu.be/szR-YuDeMOM">
+      <img
+        src="assets/youtube/axichat-selfhost-tutorial-thumbnail.png"
+        alt="Watch the Axichat self-host tutorial on YouTube"
+        width="720"
+      />
+    </a>
+  </p>
 
-- be independent
-- have full control over your own email server
-- provide a secure, private way to talk with family and friends
-- avoid hosted storage limits
-- avoid hosted rate limits
-- control your own data
-- use your own domain for all your email and XMPP messages
+## You Need
 
-We highly recommend watching this tutorial before you start:
-
-<p align="center">
-  <a href="https://youtu.be/szR-YuDeMOM">
-    <img
-      src="https://img.youtube.com/vi/szR-YuDeMOM/hqdefault.jpg"
-      alt="Watch the Axichat self-host tutorial on YouTube"
-      width="720"
-    />
-  </a>
-</p>
-
-<sub><em>We have found Netcup great for email hosting because it is one of the few VPS providers that allows port 25 and has been reliable for us. If you want a voucher, open a <a href="https://github.com/axichat/selfhost/issues/new">GitHub issue</a> or email <code>voucher@axi.chat</code> with the product you want.</em></sub>
-
-## Before You Start
-
-- Debian host with `sudo` or root access
-- a domain that already points to the server
-- control over your provider firewall / security group
-- no other service already using the required ports
-
-Ports you always need available:
-
-- `80/tcp`
-- `5222/tcp`, `5223/tcp`, `5269/tcp`, `5443/tcp`
-- `3478/udp`
-
-Extra ports if you are not using `--no-email`:
-
-- `25/tcp`, `465/tcp`, `587/tcp`, `993/tcp`, `8443/tcp`
-
-The installer does not do generic SSH hardening or baseline server-security setup.
-If UFW is already active on the server, it adds only the app-specific UFW rules for this stack.
-If UFW is inactive or not installed, open the required ports yourself in your provider firewall or host firewall.
-The installer still sets up the local ejabberd ACME port-80 forwarder itself, because that is part of the app stack rather than general firewall policy.
-
-If you leave email enabled, the following must be done separately from the script:
-
-- Stalwart Webadmin over an SSH tunnel
-- creating the Stalwart webhook for Android mail notifications
-- copying DNS records from Webadmin into your DNS provider
-- setting PTR / reverse DNS with your host or provider
-
-PTR / reverse DNS is usually set in your VPS or hosting provider panel, not in your normal DNS zone editor.
+- Debian server, fresh install, root access.
+- Your own domain.
+- A / AAAA record pointed at your server IP.
+- If you want email, which is recommended, your VPS provider must allow `25/tcp`.
+- [Netcup is a good option if you need a port-25-friendly VPS.](https://github.com/axichat/selfhost/issues/new?template=netcup-voucher.yml&title=Netcup%20voucher%20request)
 
 ## Install
 
-1. Get this repo onto the server and enter the `selfhost` directory.
+- For chat and email, run this on the server:
 
-On the server, run:
+  ```bash
+  curl -L https://gitlab.com/axichat/selfhost/-/archive/main/selfhost-main.tar.gz | tar -xzf -
+  cd selfhost-main
+  sudo bash ./install.sh install --domain example.com --public-token your-shared-token
+  ```
 
-```bash
-curl -L https://gitlab.com/axichat/selfhost/-/archive/main/selfhost-main.tar.gz | tar -xzf -
-```
+- For chat only, run this instead:
 
-```bash
-cd selfhost-main
-```
+  ```bash
+  curl -L https://gitlab.com/axichat/selfhost/-/archive/main/selfhost-main.tar.gz | tar -xzf -
+  cd selfhost-main
+  sudo bash ./install.sh install --domain example.com --no-email
+  ```
 
-If you already have the repo on your laptop and want to upload it manually instead:
+- Replace `example.com` with your domain.
+- Choose `your-shared-token` yourself.
+- Give that token to people who should be allowed to create Axichat accounts on your server.
+- Do not use an admin password as the public token.
+- Then just follow the prompts.
 
-```bash
-scp -r ./selfhost root@YOUR_SERVER_IP:~
-```
+## What The Installer Walks You Through
 
-```bash
-ssh root@YOUR_SERVER_IP
-```
+- Domain checks.
+- Local port checks.
+- UFW rules, if UFW is already active.
+- VPS firewall guidance, if you still need to open ports outside the server.
+- Stalwart Webadmin steps for email.
+- DNS records for email.
+- PTR / reverse DNS for email.
+- Verification after install.
 
-```bash
-cd ~/selfhost
-```
+## What You Get
 
-2. Choose one of these entry points.
+- Instant messaging (XMPP from ejabberd).
+- Email (SMTP from Stalwart).
+- File attachments.
+- First-party push notifications for Android.
+- No iOS push for self-hosters yet.
 
-If you want all capabilities (chat and email):
+## If You Already Have The Repo Locally
 
-```bash
-sudo bash ./install.sh install --domain example.com --public-token your-shared-token
-```
+- Upload it:
 
-Choose your own public token. Everyone that uses your server will need to enter it into their Axichat clients, so it should be something you can remember and distribute. It is not a secret.
+  ```bash
+  scp -r ./selfhost root@YOUR_SERVER_IP:~
+  ```
 
-If you do not want email:
+- SSH into the server:
 
-```bash
-sudo bash ./install.sh install --domain example.com --no-email
-```
+  ```bash
+  ssh root@YOUR_SERVER_IP
+  ```
 
-3. Follow the guided checkpoints.
+- Run the installer:
 
-When the installer needs something off-server, it prints the exact steps and then waits for you in the same terminal. In the normal flow, you do not need to open the component READMEs.
-If the script gets interrupted, rerun the same `install` command and it will continue from the saved phase.
-
-Typical email checkpoints:
-
-- create the Stalwart domain in Webadmin
-- create the `email-glue` Stalwart API key
-- create the Stalwart webhook for Android mail notifications
-- copy DNS records from Webadmin into your DNS provider
-- configure PTR / reverse DNS in your hosting provider panel
-
-For the normal guided setup, use your apex domain itself as the mail host. You do not need `mail.example.com` records unless you intentionally want a separate mail hostname.
-Android mail notifications are enabled by default for normal email installs. The installer prints the exact webhook URL, bearer token, and Stalwart Webadmin fields when it reaches that checkpoint.
+  ```bash
+  cd ~/selfhost
+  sudo bash ./install.sh install --domain example.com --public-token your-shared-token
+  ```
 
 ## Verify
 
-```bash
-sudo bash ./install.sh verify
-```
+- Check local services:
 
-```bash
-sudo bash ./install.sh doctor
-```
+  ```bash
+  sudo bash ./install.sh verify
+  ```
 
-`verify` checks the local services and health endpoints. `doctor` adds higher-level checks and uses `dig` for DNS checks when it is available.
-For normal installs (without `--no-email`), `doctor` checks not just that MX/PTR records exist, but that MX points at your configured mail domain and PTR points back to the same domain.
-For normal installs (without `--no-email`), `verify` is the immediate local check and `doctor` is the better follow-up after DNS and PTR have propagated.
+- Check DNS, PTR, and higher-level health:
+
+  ```bash
+  sudo bash ./install.sh doctor
+  ```
+
+- Run `verify` right after install.
+- Run `doctor` after DNS and PTR have had time to propagate.
 
 ## Upgrade
 
-If you later pull a newer version of this repo and want to re-run the installed services with the same saved config, use:
+- Pull the newer repo version.
+- Then just run:
 
-```bash
-sudo bash ./install.sh upgrade
-```
+  ```bash
+  sudo bash ./install.sh upgrade
+  ```
 
-`upgrade` re-runs the saved app/service configuration. It does not restart the install from scratch.
-Existing completed installs should use `upgrade` to pick up new default service features, including mail hook notifications. Rerunning `install` after completion only reports that the saved install is already complete.
-
-## Android Mail Notifications
-
-Selfhost Android mail notifications do not use `fpush`, APNS, FCM, or XEP-0357 push. Stalwart sends a `message-ingest.ham` webhook to `email-glue`; `email-glue` sends an XMPP `headline` marker from `mail-notify@DOMAIN` through ejabberd's local `/api/send_stanza`; a connected Android client treats `<x xmlns='urn:axichat:mail-push:0'/>` as an email sync/local notification hint.
-
-The marker is not a chat message and clients must not render it as normal chat. If Android does not have a live XMPP connection, this setup is not reliable native OS background push.
-
-Troubleshooting:
-
-```bash
-journalctl -u email-glue.service -b --no-pager | tail -n 200
-journalctl -u ejabberd -b --no-pager | tail -n 200
-curl -sk -X POST https://127.0.0.1:8443/hooks/stalwart/events
-```
-
-The unauthenticated hook request should return `401`.
+- `upgrade` reuses your saved install config.
+- `upgrade` does not start over from scratch.
+- Do not rerun `install` after a completed install; it will only tell you the saved install is complete.
 
 ## Public Token
 
-To view the current public token later:
+- Show the token clients should enter:
 
-```bash
-sudo bash ./install.sh public-token show
-```
+  ```bash
+  sudo bash ./install.sh public-token show
+  ```
 
-To change it without reinstalling:
+- Change it without reinstalling:
 
-```bash
-sudo bash ./install.sh public-token set new-shared-token
-```
+  ```bash
+  sudo bash ./install.sh public-token set new-shared-token
+  ```
 
-`public-token show` prints the saved token the clients should enter.
-`public-token set` updates the saved wrapper config, syncs `email-glue`, and restarts `email-glue` when it is already installed.
-If the install is still paused mid-flow, `set` updates the saved config so the next rerun uses the new token.
+- `public-token set` updates the saved config.
+- It also updates the email service.
+- If the email service is already installed, it restarts it.
 
-## Uninstall or Start Over
+## Uninstall Or Start Over
 
-To remove the local Axichat install and start over from a clean local state, run:
+- Remove the local Axichat install:
 
-```bash
-sudo bash ./uninstall.sh --yes
-```
+  ```bash
+  sudo bash ./uninstall.sh --yes
+  ```
 
-That removes the locally installed stack and then prints the manual DNS / PTR cleanup steps you still need to do off-server.
-It removes the installed app stack, not the whole server history. By default it asks whether to purge ejabberd ACME certificate state.
-Choose no if you plan to reinstall on the same server and want to reuse the existing ACME state to avoid new TLS issuance.
-Choose yes, or pass `--purge-certs`, if you want full certificate cleanup.
+- The uninstall removes the local app stack.
+- It prints the DNS and PTR cleanup you still need to do outside the server.
+- Keep ejabberd ACME certificate state if you plan to reinstall on the same server.
+- Purge cert state only when you want a cleaner reset.
+- See every uninstall flag:
 
-For the full flag list, run:
+  ```bash
+  bash ./uninstall.sh help
+  ```
 
-```bash
-bash ./uninstall.sh help
-```
+## Mail Notifications
 
-If you rerun the same `install` command after an interruption, the wrapper continues from the saved phase instead of starting over.
+- Email installs enable Android mail notification hints by default.
+- Stalwart sends new-mail events into the Axichat email bridge.
+- The bridge sends an XMPP marker from `mail-notify@DOMAIN`.
+- A connected Android client treats that marker as an email sync and local notification hint.
+- This does not use `fpush`, APNS, FCM, or XEP-0357 push.
+- The marker is not a chat message.
+- Clients must not render it as normal chat.
+- If Android does not have a live XMPP connection, this is not reliable native OS background push.
+- iOS push is not available for self-hosters yet.
 
-## Component READMEs
+- Troubleshoot it:
 
-- [`ejabberd/README.md`](ejabberd/README.md): advanced/manual ejabberd path and ejabberd-specific prompts
-- [`stalwart/README.md`](stalwart/README.md): advanced/manual Stalwart path, Webadmin/API-key flow, direct script flags, and email-specific verification
+  ```bash
+  journalctl -u email-glue.service -b --no-pager | tail -n 200
+  journalctl -u ejabberd -b --no-pager | tail -n 200
+  curl -sk -X POST https://127.0.0.1:8443/hooks/stalwart/events
+  ```
 
-Most users should only need those READMEs for troubleshooting, manual recovery, or direct component debugging.
+- The unauthenticated hook request should return `401`.
+
+## Netcup Voucher
+
+- Netcup has worked well for us for email hosting because it allows port `25/tcp`.
+- [Open a Netcup voucher request issue](https://github.com/axichat/selfhost/issues/new?template=netcup-voucher.yml&title=Netcup%20voucher%20request) if you want an affiliate voucher.
+
+## Advanced Docs
+
+- Most admins do not need these for a normal install.
+- Use [`ejabberd/README.md`](ejabberd/README.md) for direct ejabberd work.
+- Use [`stalwart/README.md`](stalwart/README.md) for direct Stalwart or email-specific debugging.
 
 ## Defaults
 
-- mailbox quota is unlimited
-- ejabberd upload limits are large
-- message history is kept by default
-- normal installs require a user-chosen public client token
-- normal email installs enable Android mail notifications through the Stalwart webhook
+- Mailbox quota is unlimited.
+- ejabberd upload limits are large.
+- Message history is kept by default.
+- Email installs require a user-chosen public client token.
+- Email installs enable Android mail notification hints through the Stalwart webhook.

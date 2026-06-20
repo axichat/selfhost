@@ -40,7 +40,7 @@ export DOMAIN=example.com
 
 Default behavior:
 
-- if you supply `--public-token=CLIENT_TOKEN`, that exact token is persisted for `email-glue`
+- if you supply `--public-token=CLIENT_TOKEN`, that exact token is persisted for the Axichat email service (`email-glue`)
 - if you only pass bare `--public-token`, the component script reuses or generates a client token
 - reuses `/root/stalwart-secrets/glue_api_token.txt` when valid
 - otherwise pauses and tells you how to create the Stalwart Admin API key that `email-glue` uses
@@ -60,7 +60,7 @@ Recommended invocations:
 ./install.sh --public-token=CLIENT_TOKEN
 ```
 
-- If you already created the Stalwart Admin API key for `email-glue`:
+- If you already created the Stalwart Admin API key for the Axichat email service:
 
 ```bash
 ./install.sh --public-token=CLIENT_TOKEN --glue-api-token=TOKEN
@@ -79,7 +79,7 @@ Recommended invocations:
 ```
 
 - `--public-token`
-  Requires `X-Client-Token` / `X-Auth-Token` for `email-glue`.
+  Requires `X-Client-Token` / `X-Auth-Token` for the Axichat email service.
   This is the default if you omit the flag.
   Reuses `/root/stalwart-secrets/client_token.txt` if present, otherwise generates one.
   This is mainly for direct/manual component use; the root `../install.sh` flow expects you to choose the token explicitly.
@@ -92,7 +92,7 @@ Recommended invocations:
   Only do this if `8443` is not internet-reachable or you intentionally want that behavior.
 
 - `--glue-api-token=TOKEN`
-  Uses and persists this Stalwart Admin API key for `email-glue`.
+  Uses and persists this Stalwart Admin API key for the Axichat email service.
   Without this flag, installer reuses `/root/stalwart-secrets/glue_api_token.txt` when valid.
   If the file is missing or invalid, the installer pauses and tells you how to create a new one in Webadmin.
 
@@ -109,12 +109,12 @@ Recommended invocations:
 There are three different tokens in this setup:
 
 - Glue API token:
-  This is the Stalwart Admin API key that `email-glue` uses to create/delete/change mail users.
+  This is the Stalwart Admin API key that the Axichat email service (`email-glue`) uses to create/delete/change mail users.
   It is stored at `/root/stalwart-secrets/glue_api_token.txt`.
   You can supply it up front with `--glue-api-token=TOKEN`, or create it in Webadmin when prompted.
 
 - Public client token:
-  This is the token remote clients send as `X-Client-Token` or `X-Auth-Token` to reach `email-glue` on `https://host:8443`.
+  This is the token remote clients send as `X-Client-Token` or `X-Auth-Token` to reach the Axichat email service on `https://host:8443`.
   It is stored at `/root/stalwart-secrets/client_token.txt`.
   In the direct component flow it is enabled by default and either reused or generated automatically.
   In the normal root-wrapper flow you are expected to choose it explicitly.
@@ -132,7 +132,7 @@ If you need to create the glue API token manually, do this:
 4. If you are not already logged in, login as `admin` with the fallback password the installer printed or stored in `/root/stalwart-secrets/fallback_admin_password.txt`.
 5. Create an API key principal with these values:
    - Type: `apiKey`
-   - Name: `email-glue`
+   - Name: `axichat-email`
    - Roles: `admin`
 6. Open the `Authentication` tab and copy the secret value shown there before you save changes. It will not be shown again afterward.
 7. Save changes.

@@ -1,0 +1,37 @@
+name: Netcup voucher request
+description: Request a Netcup affiliate voucher for Axichat self-hosting.
+title: "Netcup voucher request"
+labels:
+  - netcup
+  - voucher
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form to request a Netcup voucher for Axichat self-hosting.
+
+        GitHub issues are public. Do not include passwords, private keys, server credentials, or billing details.
+  - type: input
+    id: product
+    attributes:
+      label: Netcup product
+      description: Which Netcup VPS or product are you planning to buy?
+      placeholder: VPS 1000 G11, RS 2000 G11, etc.
+    validations:
+      required: true
+  - type: input
+    id: contact
+    attributes:
+      label: Preferred contact
+      description: Optional. Only include something you are comfortable posting publicly.
+      placeholder: GitHub username is fine.
+    validations:
+      required: false
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Optional context for the voucher request.
+      placeholder: I am setting up Axichat self-hosting for my domain.
+    validations:
+      required: false

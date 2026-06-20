@@ -27,13 +27,13 @@ usage() {
 Usage: install.sh [--public-token[=TOKEN]] [--no-public-token] [--glue-api-token=TOKEN] [--no-mail-push]
 
 Options:
-  --public-token[=TOKEN]  Require X-Client-Token / X-Auth-Token for email-glue.
+  --public-token[=TOKEN]  Require X-Client-Token / X-Auth-Token for the Axichat email service.
                           This is the default if omitted.
                           - no TOKEN: reuse client_token.txt or auto-generate one.
                           - TOKEN set: use it and persist to client_token.txt.
   --no-public-token       Disable the public client token requirement.
                           Not recommended on an internet-reachable host.
-  --glue-api-token=TOKEN  Use this Stalwart API key for email-glue and persist it.
+  --glue-api-token=TOKEN  Use this Stalwart API key for the Axichat email service and persist it.
                           If omitted, reuse glue_api_token.txt when valid, else prompt.
   --mail-push             Enable Stalwart webhook -> XMPP mail notifications.
                           This is the default for normal email installs.
@@ -431,7 +431,7 @@ You will SSH-tunnel into Stalwart Webadmin, create an API key, then paste it bac
    - Navigate to: Management (or Directory) → API Keys  (or Access Control → Principals → API Keys)
    - Click: Create / + / New
    - Type: apiKey
-   - Name: email-glue
+   - Name: axichat-email
    - Roles: admin  (fastest; you can reduce permissions later)
    - Open the Authentication tab
    - COPY the secret value shown there before you save changes
@@ -449,7 +449,7 @@ EOF
 
   while true; do
     echo
-    read -rsp "Paste the API key secret for \"email-glue\" (input hidden): " GLUE_API_TOKEN
+    read -rsp "Paste the API key secret for the Axichat email service (input hidden): " GLUE_API_TOKEN
     echo
     if [[ -z "${GLUE_API_TOKEN}" ]]; then
       warn "API key cannot be empty. Try again."
@@ -551,27 +551,27 @@ install_email_glue_binary() {
 
   if [[ "$arch" != "unsupported" && -x "$source" ]]; then
     if [[ "$MAIL_PUSH" == "1" ]] && ! email_glue_binary_supports_mail_push "$source"; then
-      warn "Bundled email-glue binary for linux/${arch} does not include mail hook support. Falling back to a local build."
+      warn "Bundled Axichat email service binary for linux/${arch} does not include mail notification support. Falling back to a local build."
     else
-      info "Installing bundled email-glue binary for linux/${arch}"
+      info "Installing bundled Axichat email service binary for linux/${arch}"
       install -m 0755 "$source" "$EMAIL_GLUE_TARGET"
       return
     fi
   else
-    warn "No bundled email-glue binary is available for this architecture. Falling back to a local Go build."
+    warn "No bundled Axichat email service binary is available for this architecture. Falling back to a local Go build."
   fi
 
-  run_logged_step "Installing Go toolchain for local email-glue build" apt-get install -y golang-go
+  run_logged_step "Installing Go toolchain for local Axichat email service build" apt-get install -y golang-go
   (
     cd "$(dirname "$0")/email-glue"
-    run_logged_step "Building email-glue locally" go build -o "$EMAIL_GLUE_TARGET" ./...
+    run_logged_step "Building Axichat email service locally" go build -o "$EMAIL_GLUE_TARGET" ./...
   )
 }
 
 install_email_glue_binary
 
-run_logged_step "Starting email-glue" systemctl enable --now email-glue.service
-run_logged_step "Restarting email-glue" systemctl restart email-glue.service
+run_logged_step "Starting Axichat email service" systemctl enable --now email-glue.service
+run_logged_step "Restarting Axichat email service" systemctl restart email-glue.service
 log_step_output systemctl --no-pager --full status email-glue.service
 run_logged_step "Starting the Stalwart certificate refresh timer" systemctl enable --now update-stalwart-cert.timer
 
