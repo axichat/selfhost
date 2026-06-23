@@ -2,15 +2,13 @@
 
 # Axichat Self-Host
 
-- All you have to do is get a Debian VPS, point your domain at it, and run the installer.
-- The installer does the server work.
-- When it needs something outside the server, it tells you exactly what to do.
-- If anything gets interrupted, just run the same command again.
-- It continues where it left off.
+- Just run the install script.
+- When it needs something done outside the server, it stops and tells you what to do.
+- If the installer gets interrupted, just re-run the same install command and it will resume.
 
 ## Watch First
 
-- Watch the self-host tutorial before you start:
+- We recommend you watch this guide before you start:
 
   <p align="center">
     <a href="https://youtu.be/szR-YuDeMOM">
@@ -25,12 +23,18 @@
 ## You Need
 
 - Debian server, fresh install, root access.
-- Your own domain.
-- A / AAAA record pointed at your server IP.
-- If you want email, which is recommended, your VPS provider must allow `25/tcp`.
+- Your own domain with the A / AAAA record pointed at your server IP.
+- If you want email, which is recommended, your VPS provider must allow mail traffic on `25/tcp`.
 - [Netcup is a good option if you need a port-25-friendly VPS.](https://github.com/axichat/selfhost/issues/new?template=netcup-voucher.yml&title=Netcup%20voucher%20request)
 
 ## Install
+
+> [!TIP]
+> Replace `example.com` with your domain.
+> Run as root. If you are already logged in as root, omit `sudo`.
+
+> [!NOTE]
+> If `curl` is missing on your fresh Debian server, run `apt-get update && apt-get install -y curl ca-certificates` first.
 
 - For chat and email, run this on the server:
 
@@ -40,6 +44,13 @@
   sudo bash ./install.sh install --domain example.com --public-token your-shared-token
   ```
 
+- `--public-token` is required for email installs.
+- Choose `your-shared-token` yourself.
+- Do not use an admin password as the public token.
+- Treat it like a shared invite code, not like public text to post online.
+- It is for mitigating crawlers and unwanted registrations.
+- You must give it to everyone who should be able to sign up so they can enter it in the app.
+
 - For chat only, run this instead:
 
   ```bash
@@ -48,29 +59,28 @@
   sudo bash ./install.sh install --domain example.com --no-email
   ```
 
-- Replace `example.com` with your domain.
-- Choose `your-shared-token` yourself.
-- Give that token to people who should be allowed to create Axichat accounts on your server.
-- Do not use an admin password as the public token.
 - Then just follow the prompts.
 
 ## What The Installer Walks You Through
 
 - Domain checks.
-- Local port checks.
+- Local port-collision checks.
 - UFW rules, if UFW is already active.
 - VPS firewall guidance, if you still need to open ports outside the server.
-- Stalwart Webadmin steps for email.
+- ejabberd admin password setup.
+- Let's Encrypt TLS certificate setup.
+- Stalwart Webadmin domain and API-key steps for email.
+- Stalwart webhook setup for Android mail notifications.
 - DNS records for email.
 - PTR / reverse DNS for email.
 - Verification after install.
 
-## What You Get
+## What You Get With Chat And Email
 
 - Instant messaging (XMPP from ejabberd).
-- Email (SMTP from Stalwart).
+- Email (SMTP/IMAP from Stalwart).
 - File attachments.
-- First-party push notifications for Android.
+- Android mail notification hints through XMPP.
 - No iOS push for self-hosters yet.
 
 ## If You Already Have The Repo Locally
@@ -110,6 +120,7 @@
 
 - Run `verify` right after install.
 - Run `doctor` after DNS and PTR have had time to propagate.
+- `doctor` checks DNS details when `dig` is installed.
 
 ## Upgrade
 
@@ -125,6 +136,8 @@
 - Do not rerun `install` after a completed install; it will only tell you the saved install is complete.
 
 ## Public Token
+
+- Public-token commands only apply to email installs.
 
 - Show the token clients should enter:
 
@@ -154,6 +167,7 @@
 - It prints the DNS and PTR cleanup you still need to do outside the server.
 - Keep ejabberd ACME certificate state if you plan to reinstall on the same server.
 - Purge cert state only when you want a cleaner reset.
+- `--yes` skips the uninstall confirmation, but cert cleanup still asks unless you pass `--keep-certs` or `--purge-certs`.
 - See every uninstall flag:
 
   ```bash
@@ -196,7 +210,7 @@
 ## Defaults
 
 - Mailbox quota is unlimited.
-- ejabberd upload limits are large.
+- ejabberd file uploads allow up to 10 GB.
 - Message history is kept by default.
 - Email installs require a user-chosen public client token.
 - Email installs enable Android mail notification hints through the Stalwart webhook.
